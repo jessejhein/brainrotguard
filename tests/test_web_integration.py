@@ -37,7 +37,7 @@ from youtube.extractor import YouTubeExtractor
 
 
 class AppClient:
-    """Small sync wrapper around AsyncClient to avoid TestClient hangs on Python 3.13."""
+    """Small sync wrapper around AsyncClient to avoid TestClient hangs."""
 
     def __init__(self, app: FastAPI, raise_server_exceptions: bool = False):
         self.app = app
@@ -69,6 +69,9 @@ class AppClient:
 
     def post(self, url: str, **kwargs) -> httpx.Response:
         return self.request("POST", url, **kwargs)
+
+    def close(self) -> None:
+        return None
 
 
 def _mock_extractor():
@@ -173,7 +176,9 @@ def store(tmp_path):
 def client(store):
     """Unauthenticated TestClient."""
     app = _create_test_app(store)
-    return AppClient(app, raise_server_exceptions=False)
+    c = AppClient(app, raise_server_exceptions=False)
+    yield c
+    c.close()
 
 
 @pytest.fixture
@@ -182,7 +187,8 @@ def auth_client(store):
     app = _create_test_app(store)
     c = AppClient(app, raise_server_exceptions=False)
     _login(c, "1234")
-    return c
+    yield c
+    c.close()
 
 
 # ---------------------------------------------------------------------------
@@ -317,13 +323,12 @@ class TestPageLoads:
         assert "activekeep1" in video_ids
         assert "activedrop1" not in video_ids
 
-    def test_active_row_styles_hide_dismiss_until_hover(self, client):
-        resp = client.get("/static/style.css")
-        assert resp.status_code == 200
-        assert ".active-card:hover .active-dismiss-btn" in resp.text
-        assert ".active-dismiss-icon" in resp.text
-        assert "opacity: 0;" in resp.text
-        assert "pointer-events: none;" in resp.text
+    def test_active_row_styles_hide_dismiss_until_hover(self):
+        css = (static_dir / "style.css").read_text(encoding="utf-8")
+        assert ".active-card:hover .active-dismiss-btn" in css
+        assert ".active-dismiss-icon" in css
+        assert "opacity: 0;" in css
+        assert "pointer-events: none;" in css
 
     def test_home_channel_pills_are_alphabetized(self, auth_client, store):
         store.add_channel("Zeta", "allowed", channel_id="UCzeta")
