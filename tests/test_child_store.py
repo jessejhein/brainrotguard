@@ -111,3 +111,19 @@ class TestChildStoreGetattr:
     def test_profile_id_attribute(self, video_store):
         cs = ChildStore(video_store, "kid1")
         assert cs.profile_id == "kid1"
+
+
+class TestChildStorePlaylistDelegation:
+    def test_playlist_methods_are_profile_scoped(self, video_store):
+        cs1 = ChildStore(video_store, "kid1")
+        cs2 = ChildStore(video_store, "kid2")
+        playlist = cs1.create_playlist("Robots")
+        cs1.add_playlist_item(playlist["id"], {
+            "video_id": "item1234567",
+            "title": "First",
+            "channel_name": "Channel A",
+        })
+
+        assert [p["name"] for p in cs1.get_playlists()] == ["Robots"]
+        assert cs2.get_playlists() == []
+        assert [item["video_id"] for item in cs1.get_playlist_items(playlist["id"])] == ["item1234567"]

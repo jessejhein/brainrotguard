@@ -161,12 +161,19 @@ class TestVideoStoreProfiles:
         video_store.create_profile("del", "Delete Me", pin="0000")
         video_store.add_video("delvid12345", "Del Video", "Ch", profile_id="del")
         video_store.add_channel("DelCh", "allowed", profile_id="del")
+        playlist = video_store.create_playlist("Del Playlist", profile_id="del")
+        video_store.add_playlist_item(playlist["id"], {
+            "video_id": "delvid12345",
+            "title": "Del Video",
+            "channel_name": "Ch",
+        }, profile_id="del")
         video_store.set_setting("del:some_key", "value")
 
         assert video_store.delete_profile("del") is True
         assert video_store.get_profile("del") is None
         assert video_store.get_video("delvid12345", profile_id="del") is None
         assert video_store.get_channels("allowed", profile_id="del") == []
+        assert video_store.get_playlists(profile_id="del") == []
 
     def test_video_isolation_between_profiles(self, video_store):
         video_store.create_profile("p1", "Profile 1")
@@ -448,3 +455,62 @@ class TestVideoStoreClose:
     def test_close(self, tmp_path):
         store = VideoStore(db_path=str(tmp_path / "close_test.db"))
         store.close()  # Should not raise
+
+
+class TestVideoStorePlaylists:
+    def test_create_and_get_playlists(self, video_store):
+        video_store.create_profile("kid1", "Kid One")
+
+        playlist = video_store.create_playlist("Robots", description="Build videos", category="edu", profile_id="kid1")
+        playlists = video_store.get_playlists(profile_id="kid1")
+
+        assert playlist["name"] == "Robots"
+        assert playlists[0]["name"] == "Robots"
+        assert playlists[0]["category"] == "edu"
+
+    def test_playlist_isolation_between_profiles(self, video_store):
+        video_store.create_profile("p1", "P1")
+        video_store.create_profile("p2", "P2")
+        video_store.create_playlist("Only P1", profile_id="p1")
+        video_store.create_playlist("Only P2", profile_id="p2")
+
+        assert [p["name"] for p in video_store.get_playlists(profile_id="p1")] == ["Only P1"]
+        assert [p["name"] for p in video_store.get_playlists(profile_id="p2")] == ["Only P2"]
+
+    def test_add_playlist_items_keeps_order(self, video_store):
+        video_store.create_profile("kid1", "Kid One")
+        playlist = video_store.create_playlist("Robots", profile_id="kid1")
+        video_store.add_playlist_item(playlist["id"], {
+            "video_id": "item1234567",
+            "title": "First",
+            "channel_name": "Channel A",
+        }, profile_id="kid1")
+        video_store.add_playlist_item(playlist["id"], {
+            "video_id": "item2345678",
+            "title": "Second",
+            "channel_name": "Channel B",
+        }, profile_id="kid1")
+
+        items = video_store.get_playlist_items(playlist["id"], profile_id="kid1")
+
+        assert [item["video_id"] for item in items] == ["item1234567", "item2345678"]
+        assert [item["position"] for item in items] == [0, 1]
+
+    def test_add_playlist_item_ignores_duplicates(self, video_store):
+        video_store.create_profile("kid1", "Kid One")
+        playlist = video_store.create_playlist("Robots", profile_id="kid1")
+        video_store.add_playlist_item(playlist["id"], {
+            "video_id": "item1234567",
+            "title": "First",
+            "channel_name": "Channel A",
+        }, profile_id="kid1")
+        video_store.add_playlist_item(playlist["id"], {
+            "video_id": "item1234567",
+            "title": "Changed",
+            "channel_name": "Channel A",
+        }, profile_id="kid1")
+
+        items = video_store.get_playlist_items(playlist["id"], profile_id="kid1")
+
+        assert len(items) == 1
+        assert items[0]["title"] == "First"
