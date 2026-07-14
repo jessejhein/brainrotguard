@@ -138,12 +138,49 @@ class VideoStore:
                 added_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS playlists (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_id TEXT NOT NULL DEFAULT 'default',
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                source_url TEXT,
+                source_playlist_id TEXT,
+                category TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS playlist_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                playlist_id INTEGER NOT NULL,
+                video_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                channel_name TEXT NOT NULL,
+                thumbnail_url TEXT,
+                duration INTEGER,
+                channel_id TEXT,
+                is_short INTEGER DEFAULT 0,
+                yt_view_count INTEGER DEFAULT 0,
+                added_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(playlist_id, video_id),
+                FOREIGN KEY(playlist_id) REFERENCES playlists(id)
+            )
+        """)
+        self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_playlists_profile ON playlists(profile_id)
+        """)
+        self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_playlist_items_playlist ON playlist_items(playlist_id, position)
+        """)
         self.conn.commit()
 
         # Run multi-child profile migrations for existing databases
         self._migrate_profile_id()
 
-    _ALLOWED_TABLES = {"channels", "videos", "watch_log", "settings", "search_log", "word_filters", "profiles"}
+    _ALLOWED_TABLES = {"channels", "videos", "watch_log", "settings", "search_log", "word_filters", "profiles", "playlists", "playlist_items"}
     _ALLOWED_COLUMNS = {"channel_id", "handle", "category", "is_short", "profile_id", "avatar_icon", "avatar_color", "yt_view_count", "resume_seconds"}
 
     def _add_column_if_missing(self, table: str, column: str, col_type: str) -> None:
@@ -367,6 +404,15 @@ class VideoStore:
             self.conn.execute("DELETE FROM watch_log WHERE profile_id = ?", (profile_id,))
             self.conn.execute("DELETE FROM channels WHERE profile_id = ?", (profile_id,))
             self.conn.execute("DELETE FROM search_log WHERE profile_id = ?", (profile_id,))
+            playlist_ids = [
+                row[0] for row in self.conn.execute(
+                    "SELECT id FROM playlists WHERE profile_id = ?",
+                    (profile_id,),
+                ).fetchall()
+            ]
+            for playlist_id in playlist_ids:
+                self.conn.execute("DELETE FROM playlist_items WHERE playlist_id = ?", (playlist_id,))
+            self.conn.execute("DELETE FROM playlists WHERE profile_id = ?", (profile_id,))
             # Delete prefixed settings
             self.conn.execute(
                 "DELETE FROM settings WHERE key LIKE ?",
@@ -691,6 +737,148 @@ class VideoStore:
                 (f"-{days} days", profile_id, limit),
             )
             return [dict(row) for row in cursor.fetchall()]
+
+    # --- Playlists ---
+
+    def create_playlist(self, name: str, description: str = "", source_url: str = "",
+                        source_playlist_id: str = "", category: str = "",
+                        profile_id: str = "default") -> dict:
+        """Create a playlist for a profile and return the created row."""
+        with self._lock:
+            cursor = self.conn.execute(
+                """
+                INSERT INTO playlists (profile_id, name, description, source_url, source_playlist_id, category)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (profile_id, name, description, source_url, source_playlist_id, category or None),
+            )
+            self.conn.commit()
+            playlist_id = cursor.lastrowid
+            cursor = self.conn.execute(
+                "SELECT * FROM playlists WHERE id = ? AND profile_id = ?",
+                (playlist_id, profile_id),
+            )
+            row = cursor.fetchone()
+            return dict(row)
+
+    def get_playlists(self, profile_id: str = "default") -> list[dict]:
+        """List playlists for a profile."""
+        with self._lock:
+            cursor = self.conn.execute(
+                """
+                SELECT p.*, COUNT(i.id) AS item_count
+                FROM playlists p
+                LEFT JOIN playlist_items i ON i.playlist_id = p.id
+                WHERE p.profile_id = ?
+                GROUP BY p.id
+                ORDER BY p.created_at, p.id
+                """,
+                (profile_id,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_playlist(self, playlist_id: int, profile_id: str = "default") -> Optional[dict]:
+        """Get a playlist by ID within a profile."""
+        with self._lock:
+            cursor = self.conn.execute(
+                "SELECT * FROM playlists WHERE id = ? AND profile_id = ?",
+                (playlist_id, profile_id),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def delete_playlist(self, playlist_id: int, profile_id: str = "default") -> bool:
+        """Delete a playlist and its items for a profile."""
+        with self._lock:
+            self.conn.execute(
+                "DELETE FROM playlist_items WHERE playlist_id = ?",
+                (playlist_id,),
+            )
+            cursor = self.conn.execute(
+                "DELETE FROM playlists WHERE id = ? AND profile_id = ?",
+                (playlist_id, profile_id),
+            )
+            self.conn.commit()
+            return cursor.rowcount > 0
+
+    def add_playlist_item(self, playlist_id: int, video: dict, position: Optional[int] = None,
+                          profile_id: str = "default") -> Optional[dict]:
+        """Add a video snapshot to a playlist if not already present."""
+        thumbnail_url = _validate_thumbnail_url(video.get("thumbnail_url"))
+        with self._lock:
+            playlist = self.conn.execute(
+                "SELECT id FROM playlists WHERE id = ? AND profile_id = ?",
+                (playlist_id, profile_id),
+            ).fetchone()
+            if not playlist:
+                return None
+            if position is None:
+                row = self.conn.execute(
+                    "SELECT COALESCE(MAX(position), -1) FROM playlist_items WHERE playlist_id = ?",
+                    (playlist_id,),
+                ).fetchone()
+                position = (row[0] or 0) + 1 if row[0] is not None and row[0] >= 0 else 0
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO playlist_items
+                (playlist_id, video_id, position, title, channel_name, thumbnail_url, duration, channel_id, is_short, yt_view_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    playlist_id,
+                    video["video_id"],
+                    position,
+                    video.get("title", "Unknown"),
+                    video.get("channel_name", "Unknown"),
+                    thumbnail_url,
+                    video.get("duration"),
+                    video.get("channel_id"),
+                    int(bool(video.get("is_short"))),
+                    video.get("yt_view_count", video.get("view_count", 0)) or 0,
+                ),
+            )
+            self.conn.commit()
+            cursor = self.conn.execute(
+                """
+                SELECT * FROM playlist_items
+                WHERE playlist_id = ? AND video_id = ?
+                """,
+                (playlist_id, video["video_id"]),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_playlist_items(self, playlist_id: int, profile_id: str = "default") -> list[dict]:
+        """List playlist items in order for a profile-scoped playlist."""
+        with self._lock:
+            cursor = self.conn.execute(
+                """
+                SELECT i.*
+                FROM playlist_items i
+                JOIN playlists p ON p.id = i.playlist_id
+                WHERE i.playlist_id = ? AND p.profile_id = ?
+                ORDER BY i.position, i.id
+                """,
+                (playlist_id, profile_id),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def remove_playlist_item(self, playlist_id: int, video_id: str, profile_id: str = "default") -> bool:
+        """Remove one video from a profile-scoped playlist."""
+        with self._lock:
+            cursor = self.conn.execute(
+                """
+                DELETE FROM playlist_items
+                WHERE playlist_id = ?
+                  AND video_id = ?
+                  AND EXISTS (
+                    SELECT 1 FROM playlists p WHERE p.id = ? AND p.profile_id = ?
+                  )
+                """,
+                (playlist_id, video_id, playlist_id, profile_id),
+            )
+            self.conn.commit()
+            return cursor.rowcount > 0
 
     # --- Word filters (global — not per-profile) ---
 

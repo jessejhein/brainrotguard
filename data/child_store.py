@@ -182,6 +182,34 @@ class ChildStore:
     def get_stats(self):
         return self._store.get_stats(profile_id=self.profile_id)
 
+    def create_playlist(self, name, description="", source_url="", source_playlist_id="", category=""):
+        return self._store.create_playlist(
+            name,
+            description=description,
+            source_url=source_url,
+            source_playlist_id=source_playlist_id,
+            category=category,
+            profile_id=self.profile_id,
+        )
+
+    def get_playlists(self):
+        return self._store.get_playlists(profile_id=self.profile_id)
+
+    def get_playlist(self, playlist_id):
+        return self._store.get_playlist(playlist_id, profile_id=self.profile_id)
+
+    def delete_playlist(self, playlist_id):
+        return self._store.delete_playlist(playlist_id, profile_id=self.profile_id)
+
+    def add_playlist_item(self, playlist_id, video, position=None):
+        return self._store.add_playlist_item(playlist_id, video, position=position, profile_id=self.profile_id)
+
+    def get_playlist_items(self, playlist_id):
+        return self._store.get_playlist_items(playlist_id, profile_id=self.profile_id)
+
+    def remove_playlist_item(self, playlist_id, video_id):
+        return self._store.remove_playlist_item(playlist_id, video_id, profile_id=self.profile_id)
+
     # --- Pass-through for global operations ---
 
     def __getattr__(self, name):
