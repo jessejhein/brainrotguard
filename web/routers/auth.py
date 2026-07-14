@@ -2,6 +2,7 @@
 
 import hmac
 import secrets
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request, Form, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -12,11 +13,21 @@ from web.helpers import AVATAR_ICONS, AVATAR_COLORS, base_ctx, get_csrf_token, v
 router = APIRouter()
 
 
+def _safe_next_path(value: str) -> str:
+    """Allow only same-origin absolute paths for post-login redirects."""
+    if not value or not value.startswith("/"):
+        return ""
+    if value.startswith("//"):
+        return ""
+    return value
+
+
 @router.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request, profile: str = Query("", max_length=50)):
+async def login_page(request: Request, profile: str = Query("", max_length=50), next: str = Query("", max_length=500)):
     """Profile picker -> optional PIN entry."""
     vs = request.app.state.video_store
     profiles = vs.get_profiles() if vs else []
+    next_path = _safe_next_path(next)
 
     # Auto-login: single profile with no PIN
     if len(profiles) == 1 and not profiles[0]["pin"]:
@@ -24,7 +35,7 @@ async def login_page(request: Request, profile: str = Query("", max_length=50)):
         request.session["child_name"] = profiles[0]["display_name"]
         request.session["avatar_icon"] = profiles[0].get("avatar_icon") or ""
         request.session["avatar_color"] = profiles[0].get("avatar_color") or ""
-        return RedirectResponse(url="/", status_code=303)
+        return RedirectResponse(url=next_path or "/", status_code=303)
 
     csrf_token = get_csrf_token(request)
 
@@ -38,7 +49,7 @@ async def login_page(request: Request, profile: str = Query("", max_length=50)):
             request.session["avatar_icon"] = p.get("avatar_icon") or ""
             request.session["avatar_color"] = p.get("avatar_color") or ""
             request.session["csrf_token"] = secrets.token_hex(32)
-            return RedirectResponse(url="/", status_code=303)
+            return RedirectResponse(url=next_path or "/", status_code=303)
         if p:
             return templates.TemplateResponse(request, "login.html", {
                 **base_ctx(request),
@@ -47,6 +58,7 @@ async def login_page(request: Request, profile: str = Query("", max_length=50)):
                 "profiles": profiles,
                 "selected_profile": p,
                 "step": "pin",
+                "next": next_path,
             })
 
     # Single profile with PIN -- go straight to PIN entry
@@ -58,6 +70,7 @@ async def login_page(request: Request, profile: str = Query("", max_length=50)):
             "profiles": profiles,
             "selected_profile": profiles[0],
             "step": "pin",
+            "next": next_path,
         })
 
     # Show profile picker
@@ -68,6 +81,7 @@ async def login_page(request: Request, profile: str = Query("", max_length=50)):
         "profiles": profiles,
         "selected_profile": None,
         "step": "pick",
+        "next": next_path,
     })
 
 
@@ -78,10 +92,13 @@ async def login_submit(
     pin: str = Form(""),
     profile_id: str = Form(""),
     csrf_token: str = Form(""),
+    next: str = Form(""),
 ):
     """Validate PIN and create session for selected profile."""
+    next_path = _safe_next_path(next)
     if not validate_csrf(request, csrf_token):
-        return RedirectResponse(url="/login", status_code=303)
+        login_url = f"/login?next={quote(next_path, safe='')}" if next_path else "/login"
+        return RedirectResponse(url=login_url, status_code=303)
 
     vs = request.app.state.video_store
     if not vs:
@@ -90,7 +107,8 @@ async def login_submit(
     # Find the profile
     profile = vs.get_profile(profile_id) if profile_id else None
     if not profile:
-        return RedirectResponse(url="/login", status_code=303)
+        login_url = f"/login?next={quote(next_path, safe='')}" if next_path else "/login"
+        return RedirectResponse(url=login_url, status_code=303)
 
     # No PIN required
     if not profile["pin"]:
@@ -99,7 +117,7 @@ async def login_submit(
         request.session["avatar_icon"] = profile.get("avatar_icon") or ""
         request.session["avatar_color"] = profile.get("avatar_color") or ""
         request.session["csrf_token"] = secrets.token_hex(32)
-        return RedirectResponse(url="/", status_code=303)
+        return RedirectResponse(url=next_path or "/", status_code=303)
 
     # Validate PIN
     stored_pin = profile["pin"] or ""
@@ -109,7 +127,7 @@ async def login_submit(
         request.session["avatar_icon"] = profile.get("avatar_icon") or ""
         request.session["avatar_color"] = profile.get("avatar_color") or ""
         request.session["csrf_token"] = secrets.token_hex(32)
-        return RedirectResponse(url="/", status_code=303)
+        return RedirectResponse(url=next_path or "/", status_code=303)
 
     # Failed PIN
     profiles = vs.get_profiles()
@@ -122,6 +140,7 @@ async def login_submit(
         "profiles": profiles,
         "selected_profile": profile,
         "step": "pin",
+        "next": next_path,
     })
 
 

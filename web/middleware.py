@@ -1,6 +1,7 @@
 """HTTP middleware: security headers + PIN-based profile authentication."""
 
 import logging
+from urllib.parse import quote
 
 from fastapi import Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -81,4 +82,7 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
         # Return JSON 401 for API endpoints instead of redirect
         if request.url.path.startswith("/api/"):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        return RedirectResponse(url="/login", status_code=303)
+        next_path = request.url.path
+        if request.url.query:
+            next_path += f"?{request.url.query}"
+        return RedirectResponse(url=f"/login?next={quote(next_path, safe='')}", status_code=303)
