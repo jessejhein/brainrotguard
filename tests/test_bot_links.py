@@ -169,3 +169,47 @@ def test_addlink_prompts_for_child_when_multiple_profiles(tmp_path):
         assert kwargs.get("reply_markup") is not None
     finally:
         store.close()
+
+
+def test_plain_text_link_approves_video_as_fun(tmp_path):
+    bot, store = _make_bot(tmp_path)
+    try:
+        update = _DummyUpdate("https://youtu.be/dQw4w9WgXcQ")
+
+        async def _fake_extract(video_id: str):
+            assert video_id == "dQw4w9WgXcQ"
+            return {
+                "video_id": video_id,
+                "title": "Test Video",
+                "channel_name": "Test Channel",
+                "channel_id": "UC123",
+                "thumbnail_url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+                "duration": 120,
+                "view_count": 99,
+                "is_short": False,
+            }
+
+        bot._extract_video_metadata = _fake_extract
+        handled = asyncio.run(bot._handle_plain_text_link(update, _DummyContext()))
+
+        assert handled is True
+        video = store.get_video("dQw4w9WgXcQ", profile_id="default")
+        assert video is not None
+        assert video["status"] == "approved"
+        assert video["category"] == "fun"
+    finally:
+        store.close()
+
+
+def test_plain_text_link_requires_admin(tmp_path):
+    bot, store = _make_bot(tmp_path)
+    try:
+        update = _DummyUpdate("https://youtu.be/dQw4w9WgXcQ", chat_id=2, user_id=2)
+        handled = asyncio.run(bot._handle_plain_text_link(update, _DummyContext()))
+
+        assert handled is False
+        assert update.message.replies
+        assert "parent/admin" in update.message.replies[0][0]
+        assert store.get_video("dQw4w9WgXcQ", profile_id="default") is None
+    finally:
+        store.close()
