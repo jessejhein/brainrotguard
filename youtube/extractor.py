@@ -4,7 +4,7 @@ import asyncio
 import logging
 import re
 from typing import Optional, Protocol, runtime_checkable
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 import yt_dlp
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,7 @@ YOUTUBE_URL_PATTERN = re.compile(
 )
 
 _VIDEO_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{11}$')
+_PLAYLIST_ID_RE = re.compile(r'^[A-Za-z0-9_-]{10,}$')
 
 _SHORTS_PATH_RE = re.compile(r'/shorts/')
 
@@ -53,6 +54,26 @@ def extract_video_id(url_or_id: str) -> Optional[str]:
     # Check if it's already a valid video ID (11 chars, alphanumeric + _ -)
     if re.match(r'^[a-zA-Z0-9_-]{11}$', url_or_id):
         return url_or_id
+    return None
+
+
+def extract_playlist_id(url_or_id: str) -> Optional[str]:
+    """Extract a YouTube playlist ID from a URL or accept a raw playlist ID."""
+    url_or_id = url_or_id.strip()
+    if not url_or_id:
+        return None
+    if _PLAYLIST_ID_RE.match(url_or_id) and not _VIDEO_ID_RE.match(url_or_id):
+        return url_or_id
+    try:
+        parsed = urlparse(url_or_id)
+    except Exception:
+        return None
+    hostname = (parsed.hostname or "").lower()
+    if hostname not in {"youtube.com", "www.youtube.com", "m.youtube.com"}:
+        return None
+    playlist_id = parse_qs(parsed.query).get("list", [""])[0].strip()
+    if playlist_id and _PLAYLIST_ID_RE.match(playlist_id):
+        return playlist_id
     return None
 
 _YDL_TIMEOUT = 30  # default; overridden by configure_timeout()
@@ -138,6 +159,63 @@ async def search(query: str, max_results: int = 10) -> list[dict]:
     except asyncio.TimeoutError:
         logger.error(f"Search timed out for '{query}'")
         return []
+
+
+def _playlist_entries_from_info(info: dict) -> list[dict]:
+    """Normalize yt-dlp playlist entries and skip invalid/deleted items."""
+    videos = []
+    for entry in (info or {}).get("entries", []):
+        if not entry:
+            continue
+        vid_id = entry.get("id")
+        title = entry.get("title", "Unknown")
+        if not vid_id or not _VIDEO_ID_RE.match(vid_id):
+            continue
+        if title in {"[Deleted video]", "[Private video]"}:
+            continue
+        videos.append({
+            "video_id": vid_id,
+            "title": title,
+            "channel_name": entry.get("channel", entry.get("uploader", "Unknown")),
+            "channel_id": entry.get("channel_id"),
+            "thumbnail_url": _safe_thumbnail(entry.get("thumbnail"), vid_id),
+            "duration": entry.get("duration"),
+            "view_count": entry.get("view_count"),
+            "is_short": _is_short_url(entry.get("url")),
+        })
+    return videos
+
+
+async def extract_playlist_metadata(url: str, max_items: int = 200) -> Optional[dict]:
+    """Extract metadata for a YouTube playlist."""
+    playlist_id = extract_playlist_id(url)
+    if not playlist_id:
+        return None
+
+    def _extract():
+        try:
+            opts = _ydl_opts()
+            opts["extract_flat"] = True
+            opts["playlistend"] = max_items
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if not info:
+                    return None
+                return {
+                    "playlist_id": playlist_id,
+                    "title": info.get("title", "Unknown Playlist"),
+                    "source_url": url,
+                    "entries": _playlist_entries_from_info(info),
+                }
+        except Exception as e:
+            logger.error(f"Playlist extraction failed for {url}: {e}")
+            return None
+
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_extract), timeout=_YDL_TIMEOUT * 2)
+    except asyncio.TimeoutError:
+        logger.error(f"Playlist extraction timed out for {url}")
+        return None
 
 async def resolve_channel_handle(handle: str) -> Optional[dict]:
     """Resolve a @handle to channel name, ID, and handle. Returns dict or None."""
@@ -376,6 +454,7 @@ class YouTubeExtractorProtocol(Protocol):
     """Protocol for YouTube metadata extraction — use for type hints and test mocks."""
 
     async def extract_metadata(self, video_id: str) -> Optional[dict]: ...
+    async def extract_playlist_metadata(self, url: str, max_items: int = 200) -> Optional[dict]: ...
     async def search(self, query: str, max_results: int = 10) -> list[dict]: ...
     async def fetch_channel_videos(self, channel_name: str, max_results: int = 10,
                                     channel_id: Optional[str] = None) -> list[dict]: ...
@@ -394,6 +473,9 @@ class YouTubeExtractor:
 
     async def extract_metadata(self, video_id: str) -> Optional[dict]:
         return await extract_metadata(video_id)
+
+    async def extract_playlist_metadata(self, url: str, max_items: int = 200) -> Optional[dict]:
+        return await extract_playlist_metadata(url, max_items=max_items)
 
     async def search(self, query: str, max_results: int = 10) -> list[dict]:
         return await search(query, max_results=max_results)
