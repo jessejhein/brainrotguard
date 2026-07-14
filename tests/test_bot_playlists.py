@@ -118,3 +118,78 @@ def test_playlist_delete_removes_playlist(tmp_path):
         assert store.get_playlists(profile_id="default") == []
     finally:
         store.close()
+
+
+def test_importplaylist_defaults_to_edu(tmp_path):
+    bot, store = _make_bot(tmp_path)
+    try:
+        update = _DummyUpdate("/importplaylist https://www.youtube.com/playlist?list=PL1234567890ABCDE")
+        context = _DummyContext(["https://www.youtube.com/playlist?list=PL1234567890ABCDE"])
+
+        async def _fake_playlist_extract(url: str, max_items: int = 200):
+            return {
+                "playlist_id": "PL1234567890ABCDE",
+                "title": "Robots Course",
+                "source_url": url,
+                "entries": [
+                    {
+                        "video_id": "dQw4w9WgXcQ",
+                        "title": "Intro",
+                        "channel_name": "Robot Channel",
+                        "channel_id": "UC123",
+                        "thumbnail_url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+                        "duration": 120,
+                        "view_count": 99,
+                        "is_short": False,
+                    }
+                ],
+            }
+
+        bot._extract_playlist_metadata = _fake_playlist_extract
+        asyncio.run(bot._cmd_importplaylist(update, context))
+
+        playlists = store.get_playlists(profile_id="default")
+        items = store.get_playlist_items(playlists[0]["id"], profile_id="default")
+        video = store.get_video("dQw4w9WgXcQ", profile_id="default")
+        assert playlists[0]["name"] == "Robots Course"
+        assert playlists[0]["category"] == "edu"
+        assert [item["video_id"] for item in items] == ["dQw4w9WgXcQ"]
+        assert video["category"] == "edu"
+    finally:
+        store.close()
+
+
+def test_importplaylist_allows_fun_override(tmp_path):
+    bot, store = _make_bot(tmp_path)
+    try:
+        update = _DummyUpdate("/importplaylist https://www.youtube.com/playlist?list=PL1234567890ABCDE fun")
+        context = _DummyContext(["https://www.youtube.com/playlist?list=PL1234567890ABCDE", "fun"])
+
+        async def _fake_playlist_extract(url: str, max_items: int = 200):
+            return {
+                "playlist_id": "PL1234567890ABCDE",
+                "title": "Fun Robots",
+                "source_url": url,
+                "entries": [
+                    {
+                        "video_id": "jjpjjcMeujM",
+                        "title": "Dance",
+                        "channel_name": "Robot Channel",
+                        "channel_id": "UC123",
+                        "thumbnail_url": "https://i.ytimg.com/vi/jjpjjcMeujM/hqdefault.jpg",
+                        "duration": 60,
+                        "view_count": 50,
+                        "is_short": False,
+                    }
+                ],
+            }
+
+        bot._extract_playlist_metadata = _fake_playlist_extract
+        asyncio.run(bot._cmd_importplaylist(update, context))
+
+        playlists = store.get_playlists(profile_id="default")
+        video = store.get_video("jjpjjcMeujM", profile_id="default")
+        assert playlists[0]["category"] == "fun"
+        assert video["category"] == "fun"
+    finally:
+        store.close()
