@@ -38,31 +38,14 @@ class CommandsMixin:
             self.on_video_change()
         return cs.get_video(metadata["video_id"])
 
-    async def _cmd_addlink(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Approve a single YouTube link or video ID for a child."""
-        if not await self._require_admin(update):
-            return
+    async def _approve_link_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                    raw: str, category: str = "fun") -> bool:
+        """Approve one YouTube link/ID through child selection flow."""
+        video_id = extract_video_id(raw.strip())
+        if not video_id:
+            return False
 
         async def _inner(update, context, cs, profile):
-            args = context.args or []
-            if not args:
-                await update.effective_message.reply_text(
-                    self.tr("Usage: /addlink <YouTube URL or ID> [edu|fun]")
-                )
-                return
-
-            raw = args[0].strip()
-            video_id = extract_video_id(raw)
-            if not video_id:
-                await update.effective_message.reply_text(
-                    self.tr("Please send a valid YouTube video URL or video ID.")
-                )
-                return
-
-            category = "fun"
-            if len(args) > 1 and args[1].lower() in ("edu", "fun"):
-                category = args[1].lower()
-
             video = await self._approve_video_for_child(cs, video_id, category)
             if not video:
                 await update.effective_message.reply_text(
@@ -81,6 +64,26 @@ class CommandsMixin:
             )
 
         await self._with_child_context(update, context, _inner)
+        return True
+
+    async def _cmd_addlink(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Approve a single YouTube link or video ID for a child."""
+        if not await self._require_admin(update):
+            return
+        args = context.args or []
+        if not args:
+            await update.effective_message.reply_text(
+                self.tr("Usage: /addlink <YouTube URL or ID> [edu|fun]")
+            )
+            return
+
+        category = "fun"
+        if len(args) > 1 and args[1].lower() in ("edu", "fun"):
+            category = args[1].lower()
+        if not await self._approve_link_request(update, context, args[0], category=category):
+            await update.effective_message.reply_text(
+                self.tr("Please send a valid YouTube video URL or video ID.")
+            )
 
     async def _cmd_child(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Manage child profiles. /child [add|remove|rename|pin]."""

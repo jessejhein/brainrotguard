@@ -206,8 +206,14 @@ class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, 
         return False
 
     async def _handle_plain_text_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-        """Placeholder for bare YouTube link approval flow."""
-        return False
+        """Handle bare YouTube links sent by an admin in Telegram."""
+        if not await self._require_admin(update):
+            return False
+        message = getattr(update, "message", None)
+        raw = getattr(message, "text", "") if message else ""
+        if not raw:
+            return False
+        return await self._approve_link_request(update, context, raw, category="fun")
 
     async def _extract_video_metadata(self, video_id: str) -> Optional[dict]:
         """Fetch video metadata for bot approval flows."""
