@@ -356,7 +356,7 @@ class CommandsMixin:
 
 
     async def _cmd_pending(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._check_admin(update):
+        if not await self._require_admin(update):
             return
 
         async def _inner(update, context, cs, profile):
@@ -415,7 +415,7 @@ class CommandsMixin:
 
 
     async def _cmd_approved(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._check_admin(update):
+        if not await self._require_admin(update):
             return
 
         async def _inner(update, context, cs, profile):
@@ -497,7 +497,7 @@ class CommandsMixin:
 
 
     async def _cmd_revoke(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._check_admin(update):
+        if not await self._require_admin(update):
             return
         # Extract video_id from /revoke_VIDEOID (hyphens encoded as underscores)
         text = update.message.text.strip()
@@ -533,7 +533,7 @@ class CommandsMixin:
     # --- /watch command ---
 
     async def _cmd_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._check_admin(update):
+        if not await self._require_admin(update):
             return
 
         async def _inner(update, context, cs, profile):

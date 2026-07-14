@@ -70,6 +70,7 @@ class TelegramConfig:
     """Telegram bot configuration."""
     bot_token: str = ""
     admin_chat_id: str = ""
+    admin_user_ids: str = ""
 
 
 @dataclass
@@ -153,6 +154,7 @@ class Config:
             telegram=TelegramConfig(
                 bot_token=os.environ.get("BRG_BOT_TOKEN", ""),
                 admin_chat_id=os.environ.get("BRG_ADMIN_CHAT_ID", ""),
+                admin_user_ids=os.environ.get("BRG_ADMIN_USER_IDS", ""),
             ),
             youtube=YouTubeConfig(
                 search_max_results=int(os.environ.get("BRG_YOUTUBE_MAX_RESULTS", "50")),
@@ -210,6 +212,18 @@ def load_config(config_path: str | None = None) -> Config:
         logger.warning("telegram.admin_chat_id is empty — bot commands will be unauthorized")
     elif not admin_id.lstrip("-").isdigit():
         logger.warning("telegram.admin_chat_id %r is not numeric — admin checks will fail", admin_id)
+
+    admin_user_ids = config.telegram.admin_user_ids
+    if admin_user_ids:
+        invalid = [
+            raw.strip() for raw in admin_user_ids.split(",")
+            if raw.strip() and not raw.strip().isdigit()
+        ]
+        if invalid:
+            logger.warning(
+                "telegram.admin_user_ids contains non-numeric entries: %s",
+                ", ".join(invalid),
+            )
 
     # Validate timezone at startup
     tz = config.watch_limits.timezone

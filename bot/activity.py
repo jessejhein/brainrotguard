@@ -19,7 +19,7 @@ class ActivityMixin:
     # --- /watch command ---
 
     async def _cmd_watch(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._check_admin(update):
+        if not await self._require_admin(update):
             return
 
         async def _inner(update, context, cs, profile):
@@ -162,7 +162,7 @@ class ActivityMixin:
 
 
     async def _cmd_logs(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._check_admin(update):
+        if not await self._require_admin(update):
             return
 
         async def _inner(update, context, cs, profile):
@@ -228,7 +228,7 @@ class ActivityMixin:
 
     async def _cmd_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show search history. /search [days|today|all]."""
-        if not self._check_admin(update):
+        if not await self._require_admin(update):
             return
 
         async def _inner(update, context, cs, profile):

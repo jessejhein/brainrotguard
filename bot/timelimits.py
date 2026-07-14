@@ -149,7 +149,7 @@ class TimeLimitMixin:
             s.set_setting(f"{prefix}daily_limit_minutes", "0")
 
     async def _cmd_timelimit(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._check_admin(update):
+        if not await self._require_admin(update):
             return
 
         async def _inner(update, context, cs, profile):
@@ -1293,7 +1293,7 @@ class TimeLimitMixin:
 
     async def _handle_wizard_reply(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle text replies during wizard custom input."""
-        if not self._check_admin(update):
+        if not await self._require_admin(update):
             return
         chat_id = update.effective_chat.id
         state = self._pending_wizard.get(chat_id)

@@ -48,6 +48,7 @@ class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, 
         self.bot_token = bot_token
         self.admin_chat_id = admin_chat_id
         self.admin_chat_target = self._normalize_chat_target(admin_chat_id)
+        self.admin_user_ids = self._parse_admin_user_ids(config)
         self.video_store = video_store
         self.config = config
         self.locale = get_locale(config)
@@ -95,6 +96,14 @@ class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, 
         if value.lstrip("-").isdigit():
             return int(value)
         return value
+
+    @staticmethod
+    def _parse_admin_user_ids(config) -> set[str]:
+        """Normalize comma-separated Telegram admin user IDs from config."""
+        raw = ""
+        if config and getattr(config, "telegram", None):
+            raw = getattr(config.telegram, "admin_user_ids", "") or ""
+        return {part.strip() for part in raw.split(",") if part.strip()}
 
     def tr(self, key: str, **kwargs) -> str:
         """Translate a key for the active bot locale."""
@@ -167,14 +176,23 @@ class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, 
         """Check if interaction is from an authorized admin context.
 
         Matches when:
-        - DM from admin user (effective_user.id == admin_chat_id)
         - Message/callback in admin group chat (effective_chat.id == admin_chat_id)
+        - Legacy single-admin DM (effective_user.id == admin_chat_id)
+        - DM from a listed admin user when admin_user_ids is configured
         """
         if not self.admin_chat_id:
             return False
         admin = str(self.admin_chat_id)
-        return (str(update.effective_chat.id) == admin
-                or str(update.effective_user.id) == admin)
+        chat_id = str(update.effective_chat.id) if getattr(update, "effective_chat", None) else ""
+        user_id = str(update.effective_user.id) if getattr(update, "effective_user", None) else ""
+
+        if chat_id == admin:
+            return True
+        if user_id == admin:
+            return True
+        if self.admin_user_ids and user_id in self.admin_user_ids:
+            return bool(chat_id) and not chat_id.startswith("-")
+        return False
 
     async def _require_admin(self, update: Update) -> bool:
         """Check admin access; send denial if unauthorized. Returns True if authorized."""
