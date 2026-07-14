@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ playlist.name }} - {{ app_name() }}{% endblock %}
+
+{% block content %}
+<div class="activity-container requests-page">
+    <div class="activity-header">
+        <h2 class="section-title">{{ playlist.name }}</h2>
+    </div>
+
+    {% if items %}
+    <div class="video-grid request-grid">
+        {% for item in items %}
+        <a href="/watch/{{ item.video_id }}" class="video-card request-video-card request-video-card-approved">
+            <div class="thumbnail-wrap">
+                <img src="{{ item.thumbnail_url or ('https://i.ytimg.com/vi/' ~ item.video_id ~ '/hqdefault.jpg') }}" alt="{{ item.title }}" class="video-thumbnail" loading="lazy">
+                {% if item.duration %}
+                <span class="duration-badge">{{ format_duration(item.duration) }}</span>
+                {% endif %}
+            </div>
+            <div class="video-info">
+                <h3 class="video-title">{{ item.title }}</h3>
+                <p class="video-channel">{{ item.channel_name }}</p>
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p>{{ t("No videos yet") }}</p>
+        <p class="empty-hint">{{ t("This playlist is empty") }}</p>
+    </div>
+    {% endif %}
+
+    <a href="/playlists" class="back-link back-link-home back-link-previous">{{ t("Back") }}</a>
+</div>
+{% endblock %}

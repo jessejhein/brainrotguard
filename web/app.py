@@ -19,6 +19,7 @@ from web.routers.pages import router as pages_router
 from web.routers.pwa import router as pwa_router
 from web.routers.search import router as search_router
 from web.routers.watch import router as watch_router
+from web.routers.playlists import router as playlists_router
 
 app = FastAPI(title=app_name("en"))
 app.state.limiter = limiter
@@ -36,6 +37,7 @@ app.include_router(pages_router)
 app.include_router(pwa_router)
 app.include_router(search_router)
 app.include_router(watch_router)
+app.include_router(playlists_router)
 
 
 @app.exception_handler(RateLimitExceeded)
