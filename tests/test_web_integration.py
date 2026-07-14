@@ -439,6 +439,45 @@ class TestLoginFlow:
         assert resp.status_code in (302, 303)
         assert "/login" in resp.headers.get("location", "")
 
+    def test_watch_redirect_to_login_preserves_next(self, client, store):
+        cs = ChildStore(store, "default")
+        cs.add_video("watchTest12", "Watch Me", "Test Channel", duration=120)
+        cs.update_status("watchTest12", "approved")
+
+        resp = client.get("/watch/watchTest12", follow_redirects=False)
+
+        assert resp.status_code in (302, 303)
+        assert resp.headers.get("location", "") == "/login?next=%2Fwatch%2FwatchTest12"
+
+    def test_login_redirects_to_next_after_success(self, client, store):
+        cs = ChildStore(store, "default")
+        cs.add_video("watchTest12", "Watch Me", "Test Channel", duration=120)
+        cs.update_status("watchTest12", "approved")
+
+        resp = client.get("/login?next=%2Fwatch%2FwatchTest12")
+        csrf_match = re.search(r'name="csrf_token"\s+value="([^"]+)"', resp.text)
+        csrf = csrf_match.group(1) if csrf_match else ""
+        profile_match = re.search(r'name="profile_id"\s+value="([^"]+)"', resp.text)
+        profile_id = profile_match.group(1) if profile_match else "default"
+
+        resp = client.post("/login", data={
+            "pin": "1234",
+            "profile_id": profile_id,
+            "csrf_token": csrf,
+            "next": "/watch/watchTest12",
+        }, follow_redirects=False)
+
+        assert resp.status_code in (302, 303)
+        assert resp.headers.get("location", "") == "/watch/watchTest12"
+
+    def test_playlist_redirect_to_login_preserves_next(self, client, store):
+        playlist = store.create_playlist("Robot Playlist", profile_id="default")
+
+        resp = client.get(f"/playlists/{playlist['id']}", follow_redirects=False)
+
+        assert resp.status_code in (302, 303)
+        assert resp.headers.get("location", "") == f"/login?next=%2Fplaylists%2F{playlist['id']}"
+
 
 # ---------------------------------------------------------------------------
 # Search flow
