@@ -3,7 +3,9 @@
 import pytest
 
 from youtube.extractor import (
+    _playlist_entries_from_info,
     extract_video_id,
+    extract_playlist_id,
     format_duration,
     _safe_thumbnail,
     _is_short_url,
@@ -38,6 +40,60 @@ class TestExtractVideoId:
     ])
     def test_invalid_returns_none(self, input_val):
         assert extract_video_id(input_val) is None
+
+
+class TestExtractPlaylistId:
+    @pytest.mark.parametrize("input_val, expected", [
+        ("https://www.youtube.com/playlist?list=PL1234567890ABCDE", "PL1234567890ABCDE"),
+        ("https://youtube.com/watch?v=dQw4w9WgXcQ&list=PL1234567890ABCDE", "PL1234567890ABCDE"),
+        ("PL1234567890ABCDE", "PL1234567890ABCDE"),
+    ])
+    def test_valid_playlist_extraction(self, input_val, expected):
+        assert extract_playlist_id(input_val) == expected
+
+    @pytest.mark.parametrize("input_val", [
+        "",
+        "https://example.com/playlist?list=PL123",
+        "not a playlist",
+    ])
+    def test_invalid_playlist_returns_none(self, input_val):
+        assert extract_playlist_id(input_val) is None
+
+
+class TestPlaylistEntriesFromInfo:
+    def test_filters_invalid_and_deleted_entries(self):
+        info = {
+            "entries": [
+                {
+                    "id": "dQw4w9WgXcQ",
+                    "title": "Valid One",
+                    "channel": "Channel A",
+                    "channel_id": "UCA",
+                    "thumbnail": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+                    "duration": 120,
+                    "view_count": 100,
+                    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                },
+                None,
+                {"id": "not-a-video", "title": "Bad"},
+                {"id": "abc12345678", "title": "[Deleted video]"},
+                {
+                    "id": "jjpjjcMeujM",
+                    "title": "Valid Two",
+                    "uploader": "Channel B",
+                    "duration": 60,
+                    "view_count": 50,
+                    "url": "https://www.youtube.com/shorts/jjpjjcMeujM",
+                },
+            ]
+        }
+
+        entries = _playlist_entries_from_info(info)
+
+        assert [entry["video_id"] for entry in entries] == ["dQw4w9WgXcQ", "jjpjjcMeujM"]
+        assert entries[0]["channel_name"] == "Channel A"
+        assert entries[1]["channel_name"] == "Channel B"
+        assert entries[1]["is_short"] is True
 
 
 class TestFormatDuration:
