@@ -209,6 +209,11 @@ class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, 
         """Placeholder for bare YouTube link approval flow."""
         return False
 
+    async def _extract_video_metadata(self, video_id: str) -> Optional[dict]:
+        """Fetch video metadata for bot approval flows."""
+        from youtube.extractor import extract_metadata
+        return await extract_metadata(video_id)
+
     async def _handle_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         """Route admin text messages to wizards first, then plain-link handling."""
         chat_id = update.effective_chat.id if getattr(update, "effective_chat", None) else None
@@ -279,6 +284,7 @@ class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, 
         self._app.add_handler(CommandHandler("watch", self._cmd_watch))
         self._app.add_handler(CommandHandler("time", self._cmd_timelimit))
         self._app.add_handler(CommandHandler("changelog", self._cmd_changelog))
+        self._app.add_handler(CommandHandler("addlink", self._cmd_addlink))
         self._app.add_handler(CommandHandler("shorts", self._cmd_shorts))
         self._app.add_handler(CommandHandler("autoload", self._cmd_autoload))
         self._app.add_handler(CommandHandler("child", self._cmd_child))

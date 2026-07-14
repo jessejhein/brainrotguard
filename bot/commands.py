@@ -9,13 +9,78 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from bot.helpers import _md, _answer_bg, _nav_row, _edit_msg, _channel_md_link, MD2
-from youtube.extractor import format_duration
+from youtube.extractor import extract_video_id, format_duration
 
 logger = logging.getLogger(__name__)
 
 
 class CommandsMixin:
     """General command methods extracted from BrainRotGuardBot."""
+
+    async def _approve_video_for_child(self, cs, video_id: str, category: str) -> dict | None:
+        """Fetch metadata, upsert the video, and mark it approved for one child."""
+        metadata = await self._extract_video_metadata(video_id)
+        if not metadata:
+            return None
+        cs.add_video(
+            video_id=metadata["video_id"],
+            title=metadata["title"],
+            channel_name=metadata["channel_name"],
+            thumbnail_url=metadata.get("thumbnail_url"),
+            duration=metadata.get("duration"),
+            channel_id=metadata.get("channel_id"),
+            is_short=metadata.get("is_short", False),
+            yt_view_count=metadata.get("view_count"),
+        )
+        cs.update_status(metadata["video_id"], "approved")
+        cs.set_video_category(metadata["video_id"], category)
+        if self.on_video_change:
+            self.on_video_change()
+        return cs.get_video(metadata["video_id"])
+
+    async def _cmd_addlink(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Approve a single YouTube link or video ID for a child."""
+        if not await self._require_admin(update):
+            return
+
+        async def _inner(update, context, cs, profile):
+            args = context.args or []
+            if not args:
+                await update.effective_message.reply_text(
+                    self.tr("Usage: /addlink <YouTube URL or ID> [edu|fun]")
+                )
+                return
+
+            raw = args[0].strip()
+            video_id = extract_video_id(raw)
+            if not video_id:
+                await update.effective_message.reply_text(
+                    self.tr("Please send a valid YouTube video URL or video ID.")
+                )
+                return
+
+            category = "fun"
+            if len(args) > 1 and args[1].lower() in ("edu", "fun"):
+                category = args[1].lower()
+
+            video = await self._approve_video_for_child(cs, video_id, category)
+            if not video:
+                await update.effective_message.reply_text(
+                    self.tr("Couldn't fetch that YouTube video. Try again in a moment.")
+                )
+                return
+
+            watch_url = f"/watch/{video_id}"
+            await update.effective_message.reply_text(
+                self.tr(
+                    "Approved: {title}\nCategory: {category}\nChild link: {url}",
+                    title=video["title"],
+                    category=self.cat_label(category),
+                    url=watch_url,
+                )
+            )
+
+        await self._with_child_context(update, context, _inner)
 
     async def _cmd_child(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Manage child profiles. /child [add|remove|rename|pin]."""
@@ -198,6 +263,7 @@ class CommandsMixin:
                 "`/watch [yesterday|N]` - Watch activity & time budget\n"
                 "`/logs [days|today]` - Activity report\n"
                 "`/changelog` - Latest changes\n\n"
+                "`/addlink <url|id> [edu|fun]` - Approve a YouTube link directly\n\n"
                 "**Channel:**\n"
                 "`/channel` - List all channels\n"
                 "`/channel starter` - Kid-friendly starter list\n"
