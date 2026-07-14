@@ -220,6 +220,11 @@ class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, 
         from youtube.extractor import extract_metadata
         return await extract_metadata(video_id)
 
+    async def _extract_playlist_metadata(self, url: str, max_items: int = 200) -> Optional[dict]:
+        """Fetch playlist metadata for bot import flows."""
+        from youtube.extractor import extract_playlist_metadata
+        return await extract_playlist_metadata(url, max_items=max_items)
+
     async def _handle_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         """Route admin text messages to wizards first, then plain-link handling."""
         chat_id = update.effective_chat.id if getattr(update, "effective_chat", None) else None
@@ -292,6 +297,7 @@ class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, 
         self._app.add_handler(CommandHandler("changelog", self._cmd_changelog))
         self._app.add_handler(CommandHandler("addlink", self._cmd_addlink))
         self._app.add_handler(CommandHandler("playlist", self._cmd_playlist))
+        self._app.add_handler(CommandHandler("importplaylist", self._cmd_importplaylist))
         self._app.add_handler(CommandHandler("shorts", self._cmd_shorts))
         self._app.add_handler(CommandHandler("autoload", self._cmd_autoload))
         self._app.add_handler(CommandHandler("child", self._cmd_child))

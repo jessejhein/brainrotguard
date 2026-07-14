@@ -183,6 +183,68 @@ class CommandsMixin:
 
         await self._with_child_context(update, context, _inner)
 
+    async def _cmd_importplaylist(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Import a YouTube playlist into a native BRG playlist."""
+        if not await self._require_admin(update):
+            return
+
+        async def _inner(update, context, cs, profile):
+            args = context.args or []
+            if not args:
+                await update.effective_message.reply_text(
+                    self.tr("Usage: /importplaylist <playlist_url> [edu|fun]")
+                )
+                return
+
+            category = "edu"
+            if len(args) > 1 and args[1].lower() in ("edu", "fun"):
+                category = args[1].lower()
+
+            playlist_data = await self._extract_playlist_metadata(args[0])
+            if not playlist_data:
+                await update.effective_message.reply_text(
+                    self.tr("Couldn't fetch that YouTube playlist. Check the URL and try again.")
+                )
+                return
+
+            playlist = cs.create_playlist(
+                playlist_data["title"],
+                source_url=playlist_data.get("source_url", args[0]),
+                source_playlist_id=playlist_data.get("playlist_id", ""),
+                category=category,
+            )
+
+            for entry in playlist_data.get("entries", []):
+                cs.add_video(
+                    video_id=entry["video_id"],
+                    title=entry["title"],
+                    channel_name=entry["channel_name"],
+                    thumbnail_url=entry.get("thumbnail_url"),
+                    duration=entry.get("duration"),
+                    channel_id=entry.get("channel_id"),
+                    is_short=entry.get("is_short", False),
+                    yt_view_count=entry.get("view_count"),
+                )
+                cs.update_status(entry["video_id"], "approved")
+                cs.set_video_category(entry["video_id"], category)
+                playlist_entry = dict(entry)
+                playlist_entry["yt_view_count"] = entry.get("view_count", 0)
+                cs.add_playlist_item(playlist["id"], playlist_entry)
+
+            if self.on_video_change:
+                self.on_video_change()
+
+            await update.effective_message.reply_text(
+                self.tr(
+                    "Imported playlist {id}: {title} ({count} videos)",
+                    id=playlist["id"],
+                    title=playlist["name"],
+                    count=len(playlist_data.get("entries", [])),
+                )
+            )
+
+        await self._with_child_context(update, context, _inner)
+
     async def _cmd_child(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Manage child profiles. /child [add|remove|rename|pin]."""
         if not await self._require_admin(update):
@@ -369,6 +431,7 @@ class CommandsMixin:
                 "`/playlist create <name>` - Create a playlist\n"
                 "`/playlist add <id> <url|id> [edu|fun]` - Add video to playlist\n"
                 "`/playlist delete <id>` - Delete a playlist\n\n"
+                "`/importplaylist <url> [edu|fun]` - Import a YouTube playlist\n\n"
                 "**Channel:**\n"
                 "`/channel` - List all channels\n"
                 "`/channel starter` - Kid-friendly starter list\n"
