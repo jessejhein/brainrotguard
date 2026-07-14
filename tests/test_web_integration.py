@@ -32,6 +32,7 @@ from web.routers.pwa import router as pwa_router
 from web.routers.search import router as search_router
 from web.routers.watch import router as watch_router
 from web.routers.catalog import router as catalog_router
+from web.routers.playlists import router as playlists_router
 from youtube.extractor import YouTubeExtractor
 
 
@@ -111,6 +112,7 @@ def _create_test_app(store: VideoStore, pin: str = "1234") -> FastAPI:
     test_app.include_router(search_router)
     test_app.include_router(watch_router)
     test_app.include_router(catalog_router)
+    test_app.include_router(playlists_router)
 
     # State
     state = test_app.state
@@ -807,3 +809,34 @@ class TestCatalogAndHistory:
         data = resp.json()
         assert data["groups"]
         assert data["groups"][0]["videos"][0]["watched_percent"] == 75
+
+
+class TestPlaylists:
+    def test_playlists_page_lists_current_profile_playlists(self, auth_client, store):
+        default_playlist = store.create_playlist("Default Playlist", profile_id="default")
+        store.create_profile("kid2", "Kid 2", pin="2222")
+        store.create_playlist("Other Playlist", profile_id="kid2")
+
+        resp = auth_client.get("/playlists")
+
+        assert resp.status_code == 200
+        assert "Default Playlist" in resp.text
+        assert "Other Playlist" not in resp.text
+        assert f'/playlists/{default_playlist["id"]}' in resp.text
+
+    def test_playlist_detail_page_links_to_watch(self, auth_client, store):
+        playlist = store.create_playlist("Robot Playlist", profile_id="default")
+        store.add_playlist_item(playlist["id"], {
+            "video_id": "dQw4w9WgXcQ",
+            "title": "Robot Intro",
+            "channel_name": "Robot Channel",
+            "thumbnail_url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            "duration": 120,
+        }, profile_id="default")
+
+        resp = auth_client.get(f"/playlists/{playlist['id']}")
+
+        assert resp.status_code == 200
+        assert "Robot Playlist" in resp.text
+        assert "Robot Intro" in resp.text
+        assert 'href="/watch/dQw4w9WgXcQ"' in resp.text
