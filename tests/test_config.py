@@ -3,7 +3,7 @@
 import os
 import pytest
 
-from config import AppConfig, Config, expand_env_vars, load_config, WebConfig
+from config import AppConfig, Config, expand_env_vars, load_config, TelegramConfig, WebConfig
 
 
 class TestExpandEnvVars:
@@ -50,6 +50,7 @@ class TestConfigFromYaml:
     def test_env_var_expansion_in_yaml(self, tmp_path, monkeypatch):
         monkeypatch.setenv("BRG_BOT_TOKEN", "env_token_val")
         monkeypatch.setenv("BRG_ADMIN_CHAT_ID", "77777")
+        monkeypatch.setenv("BRG_ADMIN_USER_IDS", "123,456")
         cfg_file = tmp_path / "env_config.yaml"
         cfg_file.write_text("""\
 web:
@@ -58,6 +59,7 @@ web:
 telegram:
   bot_token: "${BRG_BOT_TOKEN}"
   admin_chat_id: "${BRG_ADMIN_CHAT_ID}"
+  admin_user_ids: "${BRG_ADMIN_USER_IDS}"
 youtube:
   search_max_results: 5
 database:
@@ -68,6 +70,7 @@ watch_limits:
         cfg = Config.from_yaml(cfg_file)
         assert cfg.telegram.bot_token == "env_token_val"
         assert cfg.telegram.admin_chat_id == "77777"
+        assert cfg.telegram.admin_user_ids == "123,456"
 
 
 class TestAppConfig:
@@ -134,6 +137,7 @@ class TestConfigFromEnv:
         monkeypatch.setenv("BRG_WEB_PORT", "9090")
         monkeypatch.setenv("BRG_BOT_TOKEN", "test_token")
         monkeypatch.setenv("BRG_ADMIN_CHAT_ID", "11111")
+        monkeypatch.setenv("BRG_ADMIN_USER_IDS", "123,456")
         monkeypatch.setenv("BRG_LOCALE", "nb_NO")
         monkeypatch.setenv("BRG_TIME_FORMAT", "24h")
         cfg = Config.from_env()
@@ -141,6 +145,7 @@ class TestConfigFromEnv:
         assert cfg.app.time_format == "24h"
         assert cfg.web.port == 9090
         assert cfg.telegram.bot_token == "test_token"
+        assert cfg.telegram.admin_user_ids == "123,456"
 
 
 class TestLoadConfig:
@@ -240,6 +245,28 @@ watch_limits:
         with caplog.at_level(logging.WARNING):
             load_config(str(cfg_file))
         assert "not numeric" in caplog.text
+
+    def test_invalid_admin_user_ids_warning(self, tmp_path, caplog):
+        cfg_file = tmp_path / "bad_admin_users.yaml"
+        cfg_file.write_text("""\
+web:
+  host: 0.0.0.0
+  port: 8080
+telegram:
+  bot_token: "t"
+  admin_chat_id: "-100123456"
+  admin_user_ids: "123,abc,456"
+youtube:
+  search_max_results: 5
+database:
+  path: "test.db"
+watch_limits:
+  daily_limit_minutes: 60
+""")
+        import logging
+        with caplog.at_level(logging.WARNING):
+            load_config(str(cfg_file))
+        assert "admin_user_ids" in caplog.text
 
 
 class TestWebConfig:
