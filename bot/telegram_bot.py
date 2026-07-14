@@ -291,6 +291,7 @@ class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, 
         self._app.add_handler(CommandHandler("time", self._cmd_timelimit))
         self._app.add_handler(CommandHandler("changelog", self._cmd_changelog))
         self._app.add_handler(CommandHandler("addlink", self._cmd_addlink))
+        self._app.add_handler(CommandHandler("playlist", self._cmd_playlist))
         self._app.add_handler(CommandHandler("shorts", self._cmd_shorts))
         self._app.add_handler(CommandHandler("autoload", self._cmd_autoload))
         self._app.add_handler(CommandHandler("child", self._cmd_child))

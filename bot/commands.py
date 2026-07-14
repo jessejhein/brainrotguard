@@ -85,6 +85,104 @@ class CommandsMixin:
                 self.tr("Please send a valid YouTube video URL or video ID.")
             )
 
+    async def _cmd_playlist(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Manage native playlists for a child."""
+        if not await self._require_admin(update):
+            return
+
+        async def _inner(update, context, cs, profile):
+            args = context.args or []
+            if not args:
+                playlists = cs.get_playlists()
+                if not playlists:
+                    await update.effective_message.reply_text(
+                        self.tr("No playlists yet. Use /playlist create <name> to start one.")
+                    )
+                    return
+                lines = [f"**{self.tr('Playlists')}**", ""]
+                for playlist in playlists:
+                    lines.append(
+                        self.tr(
+                            "{id}. {name} ({count} videos)",
+                            id=playlist["id"],
+                            name=playlist["name"],
+                            count=playlist.get("item_count", 0),
+                        )
+                    )
+                await update.effective_message.reply_text(_md("\n".join(lines)), parse_mode=MD2)
+                return
+
+            sub = args[0].lower()
+            if sub == "create":
+                name = " ".join(args[1:]).strip()
+                if not name:
+                    await update.effective_message.reply_text(
+                        self.tr("Usage: /playlist create <name>")
+                    )
+                    return
+                playlist = cs.create_playlist(name)
+                await update.effective_message.reply_text(
+                    self.tr("Created playlist {id}: {name}", id=playlist["id"], name=playlist["name"])
+                )
+                return
+
+            if sub == "delete":
+                if len(args) < 2 or not args[1].isdigit():
+                    await update.effective_message.reply_text(
+                        self.tr("Usage: /playlist delete <playlist_id>")
+                    )
+                    return
+                playlist_id = int(args[1])
+                if not cs.delete_playlist(playlist_id):
+                    await update.effective_message.reply_text(self.tr("Playlist not found."))
+                    return
+                await update.effective_message.reply_text(
+                    self.tr("Deleted playlist {id}.", id=playlist_id)
+                )
+                return
+
+            if sub == "add":
+                if len(args) < 3 or not args[1].isdigit():
+                    await update.effective_message.reply_text(
+                        self.tr("Usage: /playlist add <playlist_id> <YouTube URL or ID> [edu|fun]")
+                    )
+                    return
+                playlist_id = int(args[1])
+                playlist = cs.get_playlist(playlist_id)
+                if not playlist:
+                    await update.effective_message.reply_text(self.tr("Playlist not found."))
+                    return
+                category = playlist.get("category") or "fun"
+                if len(args) > 3 and args[3].lower() in ("edu", "fun"):
+                    category = args[3].lower()
+                video_id = extract_video_id(args[2])
+                if not video_id:
+                    await update.effective_message.reply_text(
+                        self.tr("Please send a valid YouTube video URL or video ID.")
+                    )
+                    return
+                video = await self._approve_video_for_child(cs, video_id, category)
+                if not video:
+                    await update.effective_message.reply_text(
+                        self.tr("Couldn't fetch that YouTube video. Try again in a moment.")
+                    )
+                    return
+                cs.add_playlist_item(playlist_id, video)
+                await update.effective_message.reply_text(
+                    self.tr(
+                        "Added to playlist {id}: {title}",
+                        id=playlist_id,
+                        title=video["title"],
+                    )
+                )
+                return
+
+            await update.effective_message.reply_text(
+                self.tr("Usage: /playlist [create|add|delete] ...")
+            )
+
+        await self._with_child_context(update, context, _inner)
+
     async def _cmd_child(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Manage child profiles. /child [add|remove|rename|pin]."""
         if not await self._require_admin(update):
@@ -267,6 +365,10 @@ class CommandsMixin:
                 "`/logs [days|today]` - Activity report\n"
                 "`/changelog` - Latest changes\n\n"
                 "`/addlink <url|id> [edu|fun]` - Approve a YouTube link directly\n\n"
+                "`/playlist` - List playlists\n"
+                "`/playlist create <name>` - Create a playlist\n"
+                "`/playlist add <id> <url|id> [edu|fun]` - Add video to playlist\n"
+                "`/playlist delete <id>` - Delete a playlist\n\n"
                 "**Channel:**\n"
                 "`/channel` - List all channels\n"
                 "`/channel starter` - Kid-friendly starter list\n"
