@@ -214,7 +214,7 @@ class TestPageLoads:
         assert resp.status_code == 200
         assert "application/javascript" in resp.headers.get("content-type", "")
         assert resp.headers.get("service-worker-allowed", "") == "/"
-        assert "brainrotguard-static-v1" in resp.text
+        assert "brainrotguard-static-v2" in resp.text
 
     def test_home_includes_pwa_metadata(self, auth_client):
         resp = auth_client.get("/")
