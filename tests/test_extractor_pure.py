@@ -75,7 +75,7 @@ class TestPlaylistEntriesFromInfo:
                     "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
                 },
                 None,
-                {"id": "not-a-video", "title": "Bad"},
+                {"id": "bad", "title": "Bad"},
                 {"id": "abc12345678", "title": "[Deleted video]"},
                 {
                     "id": "jjpjjcMeujM",
