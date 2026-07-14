@@ -6,6 +6,7 @@ All configuration lives in two files:
 ```
 BRG_BOT_TOKEN=123456789:ABCdefGhIjKlMnOpQrStUvWxYz
 BRG_ADMIN_CHAT_ID=987654321
+BRG_ADMIN_USER_IDS=123456789,987654321
 BRG_PIN=1234
 BRG_BASE_URL=http://192.168.1.100:8080
 ```
@@ -26,6 +27,7 @@ web:
 telegram:
   bot_token: ${BRG_BOT_TOKEN}
   admin_chat_id: ${BRG_ADMIN_CHAT_ID}
+  admin_user_ids: ${BRG_ADMIN_USER_IDS}
 
 youtube:
   search_max_results: 50         # max results per search
@@ -84,7 +86,8 @@ If you skip `config.yaml` entirely, everything falls back to environment variabl
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `BRG_BOT_TOKEN` | Telegram bot token | *required* |
-| `BRG_ADMIN_CHAT_ID` | Parent's Telegram chat ID | *required* |
+| `BRG_ADMIN_CHAT_ID` | Telegram chat ID that receives approval notifications | *required* |
+| `BRG_ADMIN_USER_IDS` | Comma-separated Telegram user IDs allowed to administer the bot in DMs | — |
 | `BRG_WEB_HOST` | Web server bind address | `0.0.0.0` |
 | `BRG_WEB_PORT` | Web server port | `8080` |
 | `BRG_PIN` | Web UI access PIN (empty = no auth) | — |
@@ -94,3 +97,23 @@ If you skip `config.yaml` entirely, everything falls back to environment variabl
 | `BRG_YOUTUBE_MAX_RESULTS` | Max search results | `10` |
 | `BRG_BASE_URL` | LAN URL for Telegram links (e.g. `http://192.168.1.100:8080`) | — |
 | `BRG_DB_PATH` | SQLite database path | `db/videos.db` |
+
+### Multi-Admin Setup
+
+`BRG_ADMIN_CHAT_ID` and `BRG_ADMIN_USER_IDS` serve different roles:
+
+- `BRG_ADMIN_CHAT_ID` is the notification destination for new approval requests and alerts. This can be a parent group chat.
+- `BRG_ADMIN_USER_IDS` is an optional allowlist of individual parent Telegram user IDs who can run admin commands in direct messages.
+
+Typical two-parent setup:
+
+```env
+BRG_ADMIN_CHAT_ID=-1003621156256
+BRG_ADMIN_USER_IDS=123456789,987654321
+```
+
+With that setup:
+
+- approval prompts go to the shared group,
+- both listed parents can DM the bot and use `/time`, `/watch`, `/addlink`, `/playlist`, and `/importplaylist`,
+- unrelated group chats stay unauthorized.

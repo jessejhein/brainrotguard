@@ -87,8 +87,11 @@ Now I curate his content and I can see the difference. He's not parroting gamer 
 
 ### For Parents
 - **Telegram approval** — approve/deny from anywhere with one tap
+- **Direct Telegram link approval** — send a YouTube link to the bot or use `/addlink`
 - **Channel allow/block lists** — trust a channel once, and new videos from it are auto-approved
 - **Multi-child profiles** — separate PINs, watch history, and time budgets per child
+- **Multi-admin support** — keep approvals in a parent group while allowing multiple parent DMs
+- **Native playlists** — create BRG playlists, import YouTube playlists, and browse them from the child UI
 - **Edu/Fun categories** — label channels and videos as educational or entertainment, each with its own daily time limit
 - **Daily screen time limits** — set separate limits for educational and entertainment content, or a single global limit
 - **Scheduled hours** — define when watching is allowed (e.g., 8am–7pm, not during school)
@@ -103,6 +106,7 @@ Now I curate his content and I can see the difference. He's not parroting gamer 
 - **Starter channels** — curated list of kid-friendly channels (edu + fun) to import on first boot
 - **Update notifications** — automatic Telegram alert when a new version is available on GitHub
 - **PIN lock** — optional PIN gate so only your kid can access the web UI on the right device
+- **Direct child links for QR workflows** — share `/watch/...` and `/playlists/...` URLs through QR tools
 
 ### Privacy & Security
 - **100% self-hosted** — runs entirely on your own hardware inside your home network. No cloud service, no third-party accounts, no subscriptions

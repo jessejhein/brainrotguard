@@ -14,6 +14,7 @@ web:
 telegram:
   bot_token: ${BRG_BOT_TOKEN}
   admin_chat_id: ${BRG_ADMIN_CHAT_ID}
+  admin_user_ids: ${BRG_ADMIN_USER_IDS}
 
 youtube:
   search_max_results: 50

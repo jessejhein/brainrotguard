@@ -26,6 +26,8 @@ When a child requests a video from a non-allowlisted channel, you get a Telegram
 | `/approved` | List all approved videos with view counts |
 | `/approved <search>` | Search approved videos by title |
 | `/stats` | Summary: total approved, denied, pending, and views |
+| `/addlink <url\|id> [edu\|fun]` | Approve a YouTube video directly from Telegram |
+| Send a bare YouTube link | Same as `/addlink`, defaults category to `fun` |
 
 ### Approval Buttons
 
@@ -39,6 +41,20 @@ When a child requests a video, the parent receives a Telegram notification with 
 After approval, two buttons remain:
 - **Revoke** — revoke approval (video becomes denied)
 - **→ Edu** / **→ Fun** — toggle the video's category without revoking
+
+## Playlists
+
+Native BRG playlists are parent-curated ordered video lists. They appear in the child's web UI under **Playlists** and every item still goes through the normal watch page, time limits, and schedule rules.
+
+| Command | What It Does |
+|---------|-------------|
+| `/playlist` | List playlists for the selected child |
+| `/playlist create <name>` | Create an empty native playlist |
+| `/playlist add <id> <url\|id> [edu\|fun]` | Approve a video and append it to a playlist |
+| `/playlist delete <id>` | Delete a native playlist |
+| `/importplaylist <playlist_url> [edu\|fun]` | Import a YouTube playlist into a native BRG playlist |
+
+`/importplaylist` defaults to `edu` when you omit the category. `/playlist add` defaults to the playlist's own category if set, otherwise `fun`.
 
 ## Channel Management
 
@@ -144,6 +160,10 @@ Manage child profiles. Each profile has its own PIN, watch history, and time bud
 | `/child remove <name>` | Remove a child profile |
 | `/child rename <name>` | Rename a child profile |
 | `/child pin <name>` | Change a child profile's PIN |
+
+## Multi-Admin
+
+If `BRG_ADMIN_USER_IDS` is configured, listed parents can run commands in direct messages while approval notifications still go to `BRG_ADMIN_CHAT_ID`. Listed admins are not authorized in unrelated group chats.
 
 ## Other
 

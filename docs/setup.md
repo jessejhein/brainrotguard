@@ -45,6 +45,7 @@ Edit the `.env` file and fill in your values:
 ```
 BRG_BOT_TOKEN=123456789:ABCdefGhIjKlMnOpQrStUvWxYz
 BRG_ADMIN_CHAT_ID=987654321
+BRG_ADMIN_USER_IDS=
 BRG_PIN=1234
 BRG_BASE_URL=http://192.168.1.100:8080
 ```
@@ -54,8 +55,25 @@ You can optionally edit the defaults in the config.yaml.
 |---------|------------|-----------|
 | `BRG_BOT_TOKEN` | The token from Step 1 | Yes |
 | `BRG_ADMIN_CHAT_ID` | The chat ID from Step 2 | Yes |
+| `BRG_ADMIN_USER_IDS` | Optional comma-separated Telegram user IDs for parents who should be allowed to administer the bot in direct messages | No |
 | `BRG_PIN` | A PIN code kids enter to use the web UI. Leave empty to skip. | No |
 | `BRG_BASE_URL` | Your server's LAN address (e.g. `http://192.168.1.100:8080`). Enables clickable links in Telegram bot messages. Use an IP address, not a hostname. | No |
+
+### Two-Parent Group Setup
+
+If you want approval prompts to appear in a shared Telegram group but still let each parent DM the bot:
+
+1. Set `BRG_ADMIN_CHAT_ID` to the group chat ID.
+2. Set `BRG_ADMIN_USER_IDS` to the individual user IDs of each parent, comma-separated.
+
+Example:
+
+```env
+BRG_ADMIN_CHAT_ID=-1003621156256
+BRG_ADMIN_USER_IDS=123456789,987654321
+```
+
+That setup keeps approval notifications in the parent group while allowing both listed parents to use admin commands in direct messages.
 
 ## Step 4: Start It Up
 
@@ -64,6 +82,8 @@ docker compose up -d
 ```
 
 That's it. Open `http://<your-server-ip>:8080` on the kid's tablet.
+
+After login, the child can open direct links such as `/watch/<video_id>` or `/playlists/<playlist_id>`. This is the basis for QR workflows: approve/import content from Telegram, then turn the direct child URLs into QR codes with your preferred external tool.
 
 To check that it's running:
 ```bash
