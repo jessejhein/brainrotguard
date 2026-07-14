@@ -93,3 +93,79 @@ def test_handle_text_message_preserves_wizard_priority(tmp_path):
         assert called == []
     finally:
         store.close()
+
+
+def test_addlink_approves_video_with_category(tmp_path):
+    bot, store = _make_bot(tmp_path)
+    try:
+        update = _DummyUpdate("/addlink https://youtu.be/dQw4w9WgXcQ edu")
+        context = _DummyContext(["https://youtu.be/dQw4w9WgXcQ", "edu"])
+
+        async def _fake_extract(video_id: str):
+            assert video_id == "dQw4w9WgXcQ"
+            return {
+                "video_id": video_id,
+                "title": "Test Video",
+                "channel_name": "Test Channel",
+                "channel_id": "UC123",
+                "thumbnail_url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+                "duration": 120,
+                "view_count": 99,
+                "is_short": False,
+            }
+
+        bot._extract_video_metadata = _fake_extract
+        asyncio.run(bot._cmd_addlink(update, context))
+
+        video = store.get_video("dQw4w9WgXcQ", profile_id="default")
+        assert video is not None
+        assert video["status"] == "approved"
+        assert video["category"] == "edu"
+    finally:
+        store.close()
+
+
+def test_addlink_rejects_invalid_url(tmp_path):
+    bot, store = _make_bot(tmp_path)
+    try:
+        update = _DummyUpdate("/addlink not-a-link")
+        context = _DummyContext(["not-a-link"])
+
+        asyncio.run(bot._cmd_addlink(update, context))
+
+        assert update.message.replies
+        assert "YouTube" in update.message.replies[0][0]
+    finally:
+        store.close()
+
+
+def test_addlink_requires_admin(tmp_path):
+    bot, store = _make_bot(tmp_path)
+    try:
+        update = _DummyUpdate("/addlink https://youtu.be/dQw4w9WgXcQ", chat_id=2, user_id=2)
+        context = _DummyContext(["https://youtu.be/dQw4w9WgXcQ"])
+
+        asyncio.run(bot._cmd_addlink(update, context))
+
+        assert update.message.replies
+        assert "parent/admin" in update.message.replies[0][0]
+        assert store.get_video("dQw4w9WgXcQ", profile_id="default") is None
+    finally:
+        store.close()
+
+
+def test_addlink_prompts_for_child_when_multiple_profiles(tmp_path):
+    bot, store = _make_bot(tmp_path)
+    try:
+        store.create_profile("kid2", "Kid 2")
+        update = _DummyUpdate("/addlink https://youtu.be/dQw4w9WgXcQ")
+        context = _DummyContext(["https://youtu.be/dQw4w9WgXcQ"])
+
+        asyncio.run(bot._cmd_addlink(update, context))
+
+        assert update.message.replies
+        text, kwargs = update.message.replies[0]
+        assert "Which child?" in text
+        assert kwargs.get("reply_markup") is not None
+    finally:
+        store.close()
