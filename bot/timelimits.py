@@ -1291,23 +1291,23 @@ class TimeLimitMixin:
 
     # --- Wizard custom reply handler ---
 
-    async def _handle_wizard_reply(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _handle_wizard_reply(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         """Handle text replies during wizard custom input."""
         if not await self._require_admin(update):
-            return
+            return True
         chat_id = update.effective_chat.id
         state = self._pending_wizard.get(chat_id)
         if not state:
-            return  # No wizard active
+            return False  # No wizard active
 
         # Route onboard_* steps to SetupMixin
         step = state["step"]
         if step.startswith("onboard_"):
             if await self._handle_onboard_reply(update, state):
-                return
+                return True
             # Unhandled onboard step (e.g. onboard_hub, onboard_child_pin_prompt)
             # — ignore text input, these steps expect button presses only
-            return
+            return True
 
         text = update.message.text.strip()
         ws = self._wizard_store(chat_id)
@@ -1319,7 +1319,7 @@ class TimeLimitMixin:
                 await update.effective_message.reply_text(
                     self.tr("Invalid time. Examples: 800am, 8:00, 2000, 8:00PM")
                 )
-                return
+                return True
             onboard = state.get("onboard_return", False)
             del self._pending_wizard[chat_id]
 
@@ -1368,12 +1368,12 @@ class TimeLimitMixin:
                 ws.set_setting(f"{day}_schedule_end", parsed)
                 grid_text, keyboard = self._setup_sched_day_grid(store=ws)
                 await update.effective_message.reply_text(grid_text, parse_mode=MD2, reply_markup=keyboard)
-            return
+            return True
 
         # Limit wizard steps expect positive integer minutes
         if not text.isdigit() or int(text) <= 0:
             await update.effective_message.reply_text(self.tr("Please reply with a positive number of minutes."))
-            return
+            return True
         onboard = state.get("onboard_return", False)
         minutes = int(text)
         del self._pending_wizard[chat_id]
@@ -1425,3 +1425,4 @@ class TimeLimitMixin:
             ), parse_mode=MD2)
             if onboard:
                 await self._send_onboard_time_return(chat_id)
+        return True

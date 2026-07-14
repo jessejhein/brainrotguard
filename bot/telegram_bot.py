@@ -205,6 +205,18 @@ class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, 
             await update.effective_message.reply_text(msg)
         return False
 
+    async def _handle_plain_text_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        """Placeholder for bare YouTube link approval flow."""
+        return False
+
+    async def _handle_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        """Route admin text messages to wizards first, then plain-link handling."""
+        chat_id = update.effective_chat.id if getattr(update, "effective_chat", None) else None
+        if chat_id is not None and chat_id in self._pending_wizard:
+            await self._handle_wizard_reply(update, context)
+            return True
+        return await self._handle_plain_text_link(update, context)
+
     def _resolve_channel_bg(self, channel_name: str, channel_id: Optional[str] = None,
                              video_id: Optional[str] = None, profile_id: str = "default") -> None:
         """Fire a background task to resolve and store missing channel identifiers.
@@ -275,7 +287,7 @@ class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, 
             filters.Regex(r'^/revoke_[a-zA-Z0-9_]{11}$'), self._cmd_revoke,
         ))
         self._app.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND, self._handle_wizard_reply,
+            filters.TEXT & ~filters.COMMAND, self._handle_text_message,
         ))
         self._app.add_handler(CallbackQueryHandler(self._handle_callback))
 
