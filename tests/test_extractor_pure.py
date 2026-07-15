@@ -4,6 +4,7 @@ import pytest
 
 from youtube.extractor import (
     _playlist_entries_from_info,
+    _playlist_title_from_info,
     extract_video_id,
     extract_video_ids,
     extract_playlist_id,
@@ -156,6 +157,20 @@ class TestPlaylistEntriesFromInfo:
         assert skipped_count == 0
         assert entries[0]["title"] == "Unknown"
         assert entries[0]["channel_name"] == "Unknown"
+
+
+class TestPlaylistTitleFromInfo:
+    def test_normalizes_missing_playlist_title(self):
+        assert _playlist_title_from_info({}) == "Unknown Playlist"
+
+    def test_normalizes_null_playlist_title(self):
+        assert _playlist_title_from_info({"title": None}) == "Unknown Playlist"
+
+    def test_normalizes_blank_playlist_title(self):
+        assert _playlist_title_from_info({"title": "   "}) == "Unknown Playlist"
+
+    def test_preserves_non_blank_playlist_title(self):
+        assert _playlist_title_from_info({"title": "  Robots Course  "}) == "Robots Course"
 
 
 class TestFormatDuration:

@@ -418,6 +418,37 @@ def test_importplaylist_reply_reports_skipped_entries(tmp_path):
         store.close()
 
 
+def test_importplaylist_handles_unknown_playlist_title(tmp_path):
+    bot, store = _make_bot(tmp_path)
+    try:
+        update = _DummyUpdate("/importplaylist https://www.youtube.com/playlist?list=PL1234567890ABCDE")
+        context = _DummyContext(["https://www.youtube.com/playlist?list=PL1234567890ABCDE"])
+
+        async def _fake_playlist_extract(url: str, max_items: int = 200):
+            return {
+                "playlist_id": "PL1234567890ABCDE",
+                "title": "Unknown Playlist",
+                "source_url": url,
+                "entries": [
+                    {
+                        "video_id": "dQw4w9WgXcQ",
+                        "title": "Intro",
+                        "channel_name": "Robot Channel",
+                    }
+                ],
+                "skipped_count": 0,
+            }
+
+        bot._extract_playlist_metadata = _fake_playlist_extract
+        asyncio.run(bot._cmd_importplaylist(update, context))
+
+        playlists = store.get_playlists(profile_id="default")
+        assert playlists[0]["name"] == "Unknown Playlist"
+        assert store.get_video("dQw4w9WgXcQ", profile_id="default") is not None
+    finally:
+        store.close()
+
+
 def test_importplaylist_handles_normalized_unknown_display_fields(tmp_path):
     bot, store = _make_bot(tmp_path)
     try:

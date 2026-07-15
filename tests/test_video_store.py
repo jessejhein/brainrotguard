@@ -468,6 +468,27 @@ class TestVideoStorePlaylists:
         assert playlists[0]["name"] == "Robots"
         assert playlists[0]["category"] == "edu"
 
+    def test_create_playlist_normalizes_missing_name(self, video_store):
+        video_store.create_profile("kid1", "Kid One")
+
+        playlist = video_store.create_playlist(None, profile_id="kid1")
+
+        assert playlist["name"] == "Unknown Playlist"
+
+    def test_create_playlist_normalizes_blank_name(self, video_store):
+        video_store.create_profile("kid1", "Kid One")
+
+        playlist = video_store.create_playlist("   ", profile_id="kid1")
+
+        assert playlist["name"] == "Unknown Playlist"
+
+    def test_create_playlist_trims_name(self, video_store):
+        video_store.create_profile("kid1", "Kid One")
+
+        playlist = video_store.create_playlist("  Robots  ", profile_id="kid1")
+
+        assert playlist["name"] == "Robots"
+
     def test_playlist_isolation_between_profiles(self, video_store):
         video_store.create_profile("p1", "P1")
         video_store.create_profile("p2", "P2")

@@ -1,6 +1,7 @@
 """Tests for config.py — loading, env var expansion, validation."""
 
 import os
+from pathlib import Path
 import pytest
 
 from config import AppConfig, Config, expand_env_vars, load_config, TelegramConfig, WebConfig
@@ -279,3 +280,8 @@ class TestWebConfig:
         monkeypatch.setenv("BRG_BASE_URL", "http://10.0.0.1:8080")
         cfg = WebConfig(base_url="http://custom:9090")
         assert cfg.base_url == "http://custom:9090"
+
+
+def test_docker_compose_example_passes_base_url():
+    text = Path("docker-compose.example.yml").read_text(encoding="utf-8")
+    assert "BRG_BASE_URL=${BRG_BASE_URL:-}" in text

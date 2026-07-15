@@ -744,6 +744,7 @@ class VideoStore:
                         source_playlist_id: str = "", category: str = "",
                         profile_id: str = "default") -> dict:
         """Create a playlist for a profile and return the created row."""
+        name = (name or "").strip() or "Unknown Playlist"
         with self._lock:
             cursor = self.conn.execute(
                 """

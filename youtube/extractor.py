@@ -56,6 +56,11 @@ def _is_unavailable_playlist_entry(entry: dict) -> bool:
     return availability in _UNAVAILABLE_PLAYLIST_AVAILABILITY
 
 
+def _playlist_title_from_info(info: dict) -> str:
+    """Normalize playlist titles so imports always have a usable name."""
+    return ((info or {}).get("title") or "").strip() or "Unknown Playlist"
+
+
 def _extract_video_id_from_url(candidate: str) -> Optional[str]:
     """Extract a YouTube video ID from a validated YouTube URL."""
     try:
@@ -275,7 +280,7 @@ async def extract_playlist_metadata(url: str, max_items: int = 200) -> Optional[
                 entries, skipped_count = _playlist_entries_from_info(info)
                 return {
                     "playlist_id": playlist_id,
-                    "title": info.get("title", "Unknown Playlist"),
+                    "title": _playlist_title_from_info(info),
                     "source_url": url,
                     "entries": entries,
                     "skipped_count": skipped_count,
