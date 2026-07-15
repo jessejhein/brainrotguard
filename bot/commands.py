@@ -5,6 +5,7 @@ import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
+from bot.help_text import build_help_text
 from bot.helpers import _md, _answer_bg, _nav_row, _edit_msg, _channel_md_link, MD2
 from youtube.extractor import format_duration
 
@@ -182,56 +183,10 @@ class CommandsMixin:
         from version import __version__
         help_link = self.tr("📖 [Full command reference]({url})\n",
                             url="https://github.com/GHJJ123/brainrotguard/blob/main/docs/telegram-commands.md")
+        body = build_help_text(self.tr, self.tr("App Name"), __version__)
         await update.effective_message.reply_text(_md(
-            self.tr(
-                "**{app_name} v{version}**\n\n"
-                "**Commands:**\n"
-                "`/help` - Show this message\n"
-                "`/pending` - List pending requests\n"
-                "`/approved` - List approved videos\n"
-                "`/stats` - Usage statistics\n"
-                "`/watch [yesterday|N]` - Watch activity & time budget\n"
-                "`/logs [days|today]` - Activity report\n"
-                "`/changelog` - Latest changes\n\n"
-                "`/addlink <url|id> [edu|fun]` - Approve a YouTube link directly\n"
-                "`/approveurl <url|id> [edu|fun]` - Alias for /addlink\n\n"
-                "`/playlist` - List playlists\n"
-                "`/playlist create <name>` - Create a playlist\n"
-                "`/playlist add <id> <url|id> [edu|fun]` - Add video to playlist\n"
-                "`/playlist delete <id>` - Delete a playlist\n\n"
-                "`/importplaylist <url> [edu|fun]` - Import a YouTube playlist\n"
-                "`/import_playlist <url> [edu|fun]` - Alias for /importplaylist\n\n"
-                "**Channel:**\n"
-                "`/channel` - List all channels\n"
-                "`/channel starter` - Kid-friendly starter list\n"
-                "`/channel allow|unallow @handle [edu|fun]`\n"
-                "`/channel block|unblock @handle`\n"
-                "`/channel cat <name> edu|fun`\n\n"
-                "**Filters & Search:**\n"
-                "`/filter` - List word filters\n"
-                "`/filter add|remove <word>`\n"
-                "`/search [days|today|all]` - Search history\n\n"
-                "**Time & Schedule:**\n"
-                "`/time` - Show status & weekly view\n"
-                "`/time setup` - Guided limit wizard\n"
-                "`/time <min|off>` - Simple watch limit\n"
-                "`/time edu|fun <min|off>` - Category limits\n"
-                "`/time start|stop [time|off]` - Schedule\n"
-                "`/time add <min>` - Bonus for today\n"
-                "`/time <day> [start|stop|edu|fun|limit|off]`\n"
-                "`/time <day> copy <days|weekdays|weekend|all>`\n"
-                "`/shorts [on|off]` - Toggle Shorts row\n"
-                "`/autoload [on|off]` - Toggle scroll loading\n\n"
-                "**Profiles:**\n"
-                "`/child` - List child profiles\n"
-                "`/child add <name> [pin]`\n"
-                "`/child remove|rename|pin <name>`\n\n"
-                "**Setup:**\n"
-                "`/setup` - Interactive setup hub\n\n",
-                app_name=self.tr("App Name"),
-                version=__version__,
-            )
-            + f"{help_link}"
+            body
+            + help_link
             + self.tr("☕ [Buy me a coffee]({url})", url="https://ko-fi.com/coffee4jj")
         ), parse_mode=MD2, disable_web_page_preview=True)
 
