@@ -124,6 +124,39 @@ class TestPlaylistEntriesFromInfo:
         assert entries[1]["is_short"] is True
         assert skipped_count == 3
 
+    def test_skips_unavailable_entries_by_availability_metadata(self):
+        info = {
+            "entries": [
+                {"id": "dQw4w9WgXcQ", "title": "Public", "availability": "public"},
+                {"id": "jjpjjcMeujM", "title": "Private", "availability": "private"},
+                {"id": "abc12345678", "title": "Members", "availability": "subscriber_only"},
+                {"id": "xyz12345678", "title": "Unlisted", "availability": "unlisted"},
+            ]
+        }
+
+        entries, skipped_count = _playlist_entries_from_info(info)
+
+        assert [entry["video_id"] for entry in entries] == ["dQw4w9WgXcQ", "xyz12345678"]
+        assert skipped_count == 2
+
+    def test_normalizes_missing_display_fields(self):
+        info = {
+            "entries": [
+                {
+                    "id": "dQw4w9WgXcQ",
+                    "title": None,
+                    "channel": None,
+                    "uploader": None,
+                }
+            ]
+        }
+
+        entries, skipped_count = _playlist_entries_from_info(info)
+
+        assert skipped_count == 0
+        assert entries[0]["title"] == "Unknown"
+        assert entries[0]["channel_name"] == "Unknown"
+
 
 class TestFormatDuration:
     @pytest.mark.parametrize("seconds, expected", [

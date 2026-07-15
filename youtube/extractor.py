@@ -20,6 +20,12 @@ _PLAYLIST_ID_RE = re.compile(r'^[A-Za-z0-9_-]{10,}$')
 _SHORTS_PATH_RE = re.compile(r'/shorts/')
 _YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com"}
 _YOUTU_BE_HOSTS = {"youtu.be", "www.youtu.be"}
+_UNAVAILABLE_PLAYLIST_AVAILABILITY = {
+    "needs_auth",
+    "premium_only",
+    "private",
+    "subscriber_only",
+}
 
 
 def _is_short_url(url: Optional[str]) -> bool:
@@ -39,6 +45,15 @@ def _safe_thumbnail(url: Optional[str], video_id: str) -> str:
     if video_id and _VIDEO_ID_RE.match(video_id):
         return f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
     return ""
+
+
+def _is_unavailable_playlist_entry(entry: dict) -> bool:
+    """Return True when yt-dlp marks a playlist entry as unavailable."""
+    title = ((entry or {}).get("title") or "").strip()
+    if title in {"[Deleted video]", "[Private video]"}:
+        return True
+    availability = ((entry or {}).get("availability") or "").strip().lower()
+    return availability in _UNAVAILABLE_PLAYLIST_AVAILABILITY
 
 
 def _extract_video_id_from_url(candidate: str) -> Optional[str]:
@@ -217,17 +232,22 @@ def _playlist_entries_from_info(info: dict) -> tuple[list[dict], int]:
             skipped_count += 1
             continue
         vid_id = entry.get("id")
-        title = entry.get("title", "Unknown")
         if not vid_id or not _VIDEO_ID_RE.match(vid_id):
             skipped_count += 1
             continue
-        if title in {"[Deleted video]", "[Private video]"}:
+        if _is_unavailable_playlist_entry(entry):
             skipped_count += 1
             continue
+        title = (entry.get("title") or "").strip() or "Unknown"
+        channel_name = (
+            (entry.get("channel") or "").strip()
+            or (entry.get("uploader") or "").strip()
+            or "Unknown"
+        )
         videos.append({
             "video_id": vid_id,
             "title": title,
-            "channel_name": entry.get("channel", entry.get("uploader", "Unknown")),
+            "channel_name": channel_name,
             "channel_id": entry.get("channel_id"),
             "thumbnail_url": _safe_thumbnail(entry.get("thumbnail"), vid_id),
             "duration": entry.get("duration"),
