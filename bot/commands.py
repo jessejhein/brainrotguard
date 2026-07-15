@@ -1,249 +1,16 @@
 """Commands mixin: child profiles, start/help/shorts, pending/approved/revoke, stats/changelog."""
 
 import re
-import logging
-from typing import Optional
-from urllib.parse import quote
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from bot.helpers import _md, _answer_bg, _nav_row, _edit_msg, _channel_md_link, MD2
-from youtube.extractor import extract_video_id, format_duration
-
-logger = logging.getLogger(__name__)
+from youtube.extractor import format_duration
 
 
 class CommandsMixin:
     """General command methods extracted from BrainRotGuardBot."""
-
-    async def _approve_video_for_child(self, cs, video_id: str, category: str) -> dict | None:
-        """Fetch metadata, upsert the video, and mark it approved for one child."""
-        metadata = await self._extract_video_metadata(video_id)
-        if not metadata:
-            return None
-        cs.add_video(
-            video_id=metadata["video_id"],
-            title=metadata["title"],
-            channel_name=metadata["channel_name"],
-            thumbnail_url=metadata.get("thumbnail_url"),
-            duration=metadata.get("duration"),
-            channel_id=metadata.get("channel_id"),
-            is_short=metadata.get("is_short", False),
-            yt_view_count=metadata.get("view_count"),
-        )
-        cs.update_status(metadata["video_id"], "approved")
-        cs.set_video_category(metadata["video_id"], category)
-        if self.on_video_change:
-            self.on_video_change()
-        return cs.get_video(metadata["video_id"])
-
-    async def _approve_link_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
-                                    raw: str, category: str = "fun") -> bool:
-        """Approve one YouTube link/ID through child selection flow."""
-        video_id = extract_video_id(raw.strip())
-        if not video_id:
-            return False
-
-        async def _inner(update, context, cs, profile):
-            video = await self._approve_video_for_child(cs, video_id, category)
-            if not video:
-                await update.effective_message.reply_text(
-                    self.tr("Couldn't fetch that YouTube video. Try again in a moment.")
-                )
-                return
-
-            watch_url = f"/watch/{video_id}"
-            await update.effective_message.reply_text(
-                self.tr(
-                    "Approved: {title}\nCategory: {category}\nChild link: {url}",
-                    title=video["title"],
-                    category=self.cat_label(category),
-                    url=watch_url,
-                )
-            )
-
-        await self._with_child_context(update, context, _inner)
-        return True
-
-    async def _cmd_addlink(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Approve a single YouTube link or video ID for a child."""
-        if not await self._require_admin(update):
-            return
-        args = context.args or []
-        if not args:
-            await update.effective_message.reply_text(
-                self.tr("Usage: /addlink <YouTube URL or ID> [edu|fun]")
-            )
-            return
-
-        category = "fun"
-        if len(args) > 1 and args[1].lower() in ("edu", "fun"):
-            category = args[1].lower()
-        if not await self._approve_link_request(update, context, args[0], category=category):
-            await update.effective_message.reply_text(
-                self.tr("Please send a valid YouTube video URL or video ID.")
-            )
-
-    async def _cmd_playlist(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Manage native playlists for a child."""
-        if not await self._require_admin(update):
-            return
-
-        async def _inner(update, context, cs, profile):
-            args = context.args or []
-            if not args:
-                playlists = cs.get_playlists()
-                if not playlists:
-                    await update.effective_message.reply_text(
-                        self.tr("No playlists yet. Use /playlist create <name> to start one.")
-                    )
-                    return
-                lines = [f"**{self.tr('Playlists')}**", ""]
-                for playlist in playlists:
-                    lines.append(
-                        self.tr(
-                            "{id}. {name} ({count} videos)",
-                            id=playlist["id"],
-                            name=playlist["name"],
-                            count=playlist.get("item_count", 0),
-                        )
-                    )
-                await update.effective_message.reply_text(_md("\n".join(lines)), parse_mode=MD2)
-                return
-
-            sub = args[0].lower()
-            if sub == "create":
-                name = " ".join(args[1:]).strip()
-                if not name:
-                    await update.effective_message.reply_text(
-                        self.tr("Usage: /playlist create <name>")
-                    )
-                    return
-                playlist = cs.create_playlist(name)
-                await update.effective_message.reply_text(
-                    self.tr("Created playlist {id}: {name}", id=playlist["id"], name=playlist["name"])
-                )
-                return
-
-            if sub == "delete":
-                if len(args) < 2 or not args[1].isdigit():
-                    await update.effective_message.reply_text(
-                        self.tr("Usage: /playlist delete <playlist_id>")
-                    )
-                    return
-                playlist_id = int(args[1])
-                if not cs.delete_playlist(playlist_id):
-                    await update.effective_message.reply_text(self.tr("Playlist not found."))
-                    return
-                await update.effective_message.reply_text(
-                    self.tr("Deleted playlist {id}.", id=playlist_id)
-                )
-                return
-
-            if sub == "add":
-                if len(args) < 3 or not args[1].isdigit():
-                    await update.effective_message.reply_text(
-                        self.tr("Usage: /playlist add <playlist_id> <YouTube URL or ID> [edu|fun]")
-                    )
-                    return
-                playlist_id = int(args[1])
-                playlist = cs.get_playlist(playlist_id)
-                if not playlist:
-                    await update.effective_message.reply_text(self.tr("Playlist not found."))
-                    return
-                category = playlist.get("category") or "fun"
-                if len(args) > 3 and args[3].lower() in ("edu", "fun"):
-                    category = args[3].lower()
-                video_id = extract_video_id(args[2])
-                if not video_id:
-                    await update.effective_message.reply_text(
-                        self.tr("Please send a valid YouTube video URL or video ID.")
-                    )
-                    return
-                video = await self._approve_video_for_child(cs, video_id, category)
-                if not video:
-                    await update.effective_message.reply_text(
-                        self.tr("Couldn't fetch that YouTube video. Try again in a moment.")
-                    )
-                    return
-                cs.add_playlist_item(playlist_id, video)
-                await update.effective_message.reply_text(
-                    self.tr(
-                        "Added to playlist {id}: {title}",
-                        id=playlist_id,
-                        title=video["title"],
-                    )
-                )
-                return
-
-            await update.effective_message.reply_text(
-                self.tr("Usage: /playlist [create|add|delete] ...")
-            )
-
-        await self._with_child_context(update, context, _inner)
-
-    async def _cmd_importplaylist(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Import a YouTube playlist into a native BRG playlist."""
-        if not await self._require_admin(update):
-            return
-
-        async def _inner(update, context, cs, profile):
-            args = context.args or []
-            if not args:
-                await update.effective_message.reply_text(
-                    self.tr("Usage: /importplaylist <playlist_url> [edu|fun]")
-                )
-                return
-
-            category = "edu"
-            if len(args) > 1 and args[1].lower() in ("edu", "fun"):
-                category = args[1].lower()
-
-            playlist_data = await self._extract_playlist_metadata(args[0])
-            if not playlist_data:
-                await update.effective_message.reply_text(
-                    self.tr("Couldn't fetch that YouTube playlist. Check the URL and try again.")
-                )
-                return
-
-            playlist = cs.create_playlist(
-                playlist_data["title"],
-                source_url=playlist_data.get("source_url", args[0]),
-                source_playlist_id=playlist_data.get("playlist_id", ""),
-                category=category,
-            )
-
-            for entry in playlist_data.get("entries", []):
-                cs.add_video(
-                    video_id=entry["video_id"],
-                    title=entry["title"],
-                    channel_name=entry["channel_name"],
-                    thumbnail_url=entry.get("thumbnail_url"),
-                    duration=entry.get("duration"),
-                    channel_id=entry.get("channel_id"),
-                    is_short=entry.get("is_short", False),
-                    yt_view_count=entry.get("view_count"),
-                )
-                cs.update_status(entry["video_id"], "approved")
-                cs.set_video_category(entry["video_id"], category)
-                playlist_entry = dict(entry)
-                playlist_entry["yt_view_count"] = entry.get("view_count", 0)
-                cs.add_playlist_item(playlist["id"], playlist_entry)
-
-            if self.on_video_change:
-                self.on_video_change()
-
-            await update.effective_message.reply_text(
-                self.tr(
-                    "Imported playlist {id}: {title} ({count} videos)",
-                    id=playlist["id"],
-                    title=playlist["name"],
-                    count=len(playlist_data.get("entries", [])),
-                )
-            )
-
-        await self._with_child_context(update, context, _inner)
 
     async def _cmd_child(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Manage child profiles. /child [add|remove|rename|pin]."""
@@ -426,12 +193,14 @@ class CommandsMixin:
                 "`/watch [yesterday|N]` - Watch activity & time budget\n"
                 "`/logs [days|today]` - Activity report\n"
                 "`/changelog` - Latest changes\n\n"
-                "`/addlink <url|id> [edu|fun]` - Approve a YouTube link directly\n\n"
+                "`/addlink <url|id> [edu|fun]` - Approve a YouTube link directly\n"
+                "`/approveurl <url|id> [edu|fun]` - Alias for /addlink\n\n"
                 "`/playlist` - List playlists\n"
                 "`/playlist create <name>` - Create a playlist\n"
                 "`/playlist add <id> <url|id> [edu|fun]` - Add video to playlist\n"
                 "`/playlist delete <id>` - Delete a playlist\n\n"
-                "`/importplaylist <url> [edu|fun]` - Import a YouTube playlist\n\n"
+                "`/importplaylist <url> [edu|fun]` - Import a YouTube playlist\n"
+                "`/import_playlist <url> [edu|fun]` - Alias for /importplaylist\n\n"
                 "**Channel:**\n"
                 "`/channel` - List all channels\n"
                 "`/channel starter` - Kid-friendly starter list\n"

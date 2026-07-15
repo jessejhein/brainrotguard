@@ -95,7 +95,7 @@ If you skip `config.yaml` entirely, everything falls back to environment variabl
 | `BRG_LOCALE` | UI/bot language (`en` or `nb`) | `en` |
 | `BRG_TIME_FORMAT` | Time display format (`locale`, `12h`, `24h`) | `locale` |
 | `BRG_YOUTUBE_MAX_RESULTS` | Max search results | `10` |
-| `BRG_BASE_URL` | LAN URL for Telegram links (e.g. `http://192.168.1.100:8080`) | — |
+| `BRG_BASE_URL` | LAN URL used to build absolute Telegram child links for `/watch/...` and `/playlists/...` (e.g. `http://192.168.1.100:8080`) | — |
 | `BRG_DB_PATH` | SQLite database path | `db/videos.db` |
 
 ### Multi-Admin Setup
@@ -116,4 +116,5 @@ With that setup:
 
 - approval prompts go to the shared group,
 - both listed parents can DM the bot and use `/time`, `/watch`, `/addlink`, `/playlist`, and `/importplaylist`,
+- listed and legacy admins can use commands in the configured admin chat,
 - unrelated group chats stay unauthorized.

@@ -23,6 +23,7 @@ from bot.activity import ActivityMixin
 from bot.approval import ApprovalMixin
 from bot.channels import ChannelMixin
 from bot.commands import CommandsMixin
+from bot.link_playlists import LinkPlaylistMixin
 from bot.setup import SetupMixin
 from bot.timelimits import TimeLimitMixin
 from data.child_store import ChildStore
@@ -40,7 +41,7 @@ from i18n import (
 logger = logging.getLogger(__name__)
 
 
-class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, CommandsMixin, ActivityMixin):
+class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, LinkPlaylistMixin, CommandsMixin, ActivityMixin):
     """Telegram bot for parent video approval."""
 
     def __init__(self, bot_token: str, admin_chat_id: str, video_store, config=None,
@@ -108,6 +109,14 @@ class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, 
     def tr(self, key: str, **kwargs) -> str:
         """Translate a key for the active bot locale."""
         return t(self.locale, key, **kwargs)
+
+    def child_url(self, path: str) -> str:
+        """Build a child-facing URL, using web.base_url when configured."""
+        if not path.startswith("/"):
+            path = f"/{path}"
+        web_config = getattr(self.config, "web", None) if self.config else None
+        base_url = (getattr(web_config, "base_url", "") or "").rstrip("/")
+        return f"{base_url}{path}" if base_url else path
 
     def cat_label(self, category: str, short: bool = False) -> str:
         """Localized category label."""
@@ -185,13 +194,15 @@ class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, 
         admin = str(self.admin_chat_id)
         chat_id = str(update.effective_chat.id) if getattr(update, "effective_chat", None) else ""
         user_id = str(update.effective_user.id) if getattr(update, "effective_user", None) else ""
+        chat_type = getattr(getattr(update, "effective_chat", None), "type", "")
+        is_private_chat = chat_type == "private" or (bool(chat_id) and not chat_id.startswith("-"))
 
         if chat_id == admin:
             return True
-        if user_id == admin:
+        if user_id == admin and is_private_chat:
             return True
         if self.admin_user_ids and user_id in self.admin_user_ids:
-            return bool(chat_id) and not chat_id.startswith("-")
+            return is_private_chat
         return False
 
     async def _require_admin(self, update: Update) -> bool:
@@ -273,16 +284,8 @@ class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, 
                 logger.debug(f"Background channel resolve failed for {channel_name}: {e}")
         asyncio.create_task(_resolve())
 
-    async def start(self) -> None:
-        """Start the bot."""
-        logger.info("Starting BrainRotGuard bot...")
-        from telegram.request import HTTPXRequest
-        request = HTTPXRequest(
-            connect_timeout=10.0, read_timeout=15.0, write_timeout=15.0,
-            connection_pool_size=10, pool_timeout=5.0,
-        )
-        self._app = ApplicationBuilder().token(self.bot_token).request(request).build()
-
+    def _register_handlers(self) -> None:
+        """Register Telegram command, message, and callback handlers."""
         self._app.add_handler(CommandHandler("start", self._cmd_start))
         self._app.add_handler(CommandHandler("help", self._cmd_help))
         self._app.add_handler(CommandHandler("pending", self._cmd_pending))
@@ -295,9 +298,9 @@ class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, 
         self._app.add_handler(CommandHandler("watch", self._cmd_watch))
         self._app.add_handler(CommandHandler("time", self._cmd_timelimit))
         self._app.add_handler(CommandHandler("changelog", self._cmd_changelog))
-        self._app.add_handler(CommandHandler("addlink", self._cmd_addlink))
+        self._app.add_handler(CommandHandler(["addlink", "approveurl"], self._cmd_addlink))
         self._app.add_handler(CommandHandler("playlist", self._cmd_playlist))
-        self._app.add_handler(CommandHandler("importplaylist", self._cmd_importplaylist))
+        self._app.add_handler(CommandHandler(["importplaylist", "import_playlist"], self._cmd_importplaylist))
         self._app.add_handler(CommandHandler("shorts", self._cmd_shorts))
         self._app.add_handler(CommandHandler("autoload", self._cmd_autoload))
         self._app.add_handler(CommandHandler("child", self._cmd_child))
@@ -309,6 +312,17 @@ class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, 
             filters.TEXT & ~filters.COMMAND, self._handle_text_message,
         ))
         self._app.add_handler(CallbackQueryHandler(self._handle_callback))
+
+    async def start(self) -> None:
+        """Start the bot."""
+        logger.info("Starting BrainRotGuard bot...")
+        from telegram.request import HTTPXRequest
+        request = HTTPXRequest(
+            connect_timeout=10.0, read_timeout=15.0, write_timeout=15.0,
+            connection_pool_size=10, pool_timeout=5.0,
+        )
+        self._app = ApplicationBuilder().token(self.bot_token).request(request).build()
+        self._register_handlers()
 
         await self._app.initialize()
         await self._app.start()

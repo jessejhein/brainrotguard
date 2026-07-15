@@ -514,3 +514,19 @@ class TestVideoStorePlaylists:
 
         assert len(items) == 1
         assert items[0]["title"] == "First"
+
+    def test_delete_playlist_wrong_profile_preserves_items(self, video_store):
+        video_store.create_profile("p1", "P1")
+        video_store.create_profile("p2", "P2")
+        playlist = video_store.create_playlist("P2 List", profile_id="p2")
+        video_store.add_playlist_item(playlist["id"], {
+            "video_id": "item1234567",
+            "title": "First",
+            "channel_name": "Channel A",
+        }, profile_id="p2")
+
+        deleted = video_store.delete_playlist(playlist["id"], profile_id="p1")
+
+        assert deleted is False
+        assert video_store.get_playlist(playlist["id"], profile_id="p2") is not None
+        assert [item["video_id"] for item in video_store.get_playlist_items(playlist["id"], profile_id="p2")] == ["item1234567"]

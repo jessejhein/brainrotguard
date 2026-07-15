@@ -27,7 +27,11 @@ When a child requests a video from a non-allowlisted channel, you get a Telegram
 | `/approved <search>` | Search approved videos by title |
 | `/stats` | Summary: total approved, denied, pending, and views |
 | `/addlink <url\|id> [edu\|fun]` | Approve a YouTube video directly from Telegram |
+| `/approveurl <url\|id> [edu\|fun]` | Alias for `/addlink` |
 | Send a bare YouTube link | Same as `/addlink`, defaults category to `fun` |
+
+Approval replies include a direct child link to `/watch/<video_id>`. Configure `BRG_BASE_URL` to make those links absolute for QR workflows.
+Send one YouTube video link at a time. Commands or messages containing multiple distinct video links are rejected.
 
 ### Approval Buttons
 
@@ -53,8 +57,11 @@ Native BRG playlists are parent-curated ordered video lists. They appear in the 
 | `/playlist add <id> <url\|id> [edu\|fun]` | Approve a video and append it to a playlist |
 | `/playlist delete <id>` | Delete a native playlist |
 | `/importplaylist <playlist_url> [edu\|fun]` | Import a YouTube playlist into a native BRG playlist |
+| `/import_playlist <playlist_url> [edu\|fun]` | Alias for `/importplaylist` |
 
 `/importplaylist` defaults to `edu` when you omit the category. `/playlist add` defaults to the playlist's own category if set, otherwise `fun`.
+Playlist command replies include direct child links to `/playlists/<playlist_id>`. Configure `BRG_BASE_URL` to make those links absolute.
+Playlist imports report imported videos and, when applicable, how many private, deleted, or invalid entries were skipped.
 
 ## Channel Management
 

@@ -15,15 +15,11 @@ THUMB_ALLOWED_HOSTS = frozenset({
     "i4.ytimg.com", "i9.ytimg.com", "img.youtube.com",
 })
 
-# Regex to extract video ID from various YouTube URL formats
-YOUTUBE_URL_PATTERN = re.compile(
-    r'(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([a-zA-Z0-9_-]{11})'
-)
-
 _VIDEO_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{11}$')
 _PLAYLIST_ID_RE = re.compile(r'^[A-Za-z0-9_-]{10,}$')
-
 _SHORTS_PATH_RE = re.compile(r'/shorts/')
+_YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com"}
+_YOUTU_BE_HOSTS = {"youtu.be", "www.youtu.be"}
 
 
 def _is_short_url(url: Optional[str]) -> bool:
@@ -45,16 +41,67 @@ def _safe_thumbnail(url: Optional[str], video_id: str) -> str:
     return ""
 
 
+def _extract_video_id_from_url(candidate: str) -> Optional[str]:
+    """Extract a YouTube video ID from a validated YouTube URL."""
+    try:
+        parsed = urlparse(candidate)
+    except Exception:
+        return None
+
+    hostname = (parsed.hostname or "").lower()
+    if hostname in _YOUTUBE_HOSTS:
+        if parsed.path == "/watch":
+            video_id = parse_qs(parsed.query).get("v", [""])[0].strip()
+            return video_id if _VIDEO_ID_RE.match(video_id) else None
+        if parsed.path.startswith("/shorts/"):
+            video_id = parsed.path[len("/shorts/"):].split("/", 1)[0].strip()
+            return video_id if _VIDEO_ID_RE.match(video_id) else None
+        return None
+
+    if hostname in _YOUTU_BE_HOSTS:
+        video_id = parsed.path.lstrip("/").split("/", 1)[0].strip()
+        return video_id if _VIDEO_ID_RE.match(video_id) else None
+
+    return None
+
+
 def extract_video_id(url_or_id: str) -> Optional[str]:
     """Extract YouTube video ID from URL or return as-is if already an ID."""
     url_or_id = url_or_id.strip()
-    match = YOUTUBE_URL_PATTERN.search(url_or_id)
-    if match:
-        return match.group(1)
     # Check if it's already a valid video ID (11 chars, alphanumeric + _ -)
-    if re.match(r'^[a-zA-Z0-9_-]{11}$', url_or_id):
+    if _VIDEO_ID_RE.match(url_or_id):
         return url_or_id
-    return None
+
+    candidate = url_or_id
+    if "://" not in candidate:
+        lowered = candidate.lower()
+        if lowered.startswith(("www.youtube.com/", "youtube.com/", "m.youtube.com/", "youtu.be/", "www.youtu.be/")):
+            candidate = f"https://{candidate}"
+        else:
+            return None
+
+    return _extract_video_id_from_url(candidate)
+
+
+def extract_video_ids(text: str) -> list[str]:
+    """Extract unique YouTube video IDs from text in message order."""
+    text = text.strip()
+    if not text:
+        return []
+    if _VIDEO_ID_RE.match(text):
+        return [text]
+
+    found: list[str] = []
+    seen: set[str] = set()
+    for token in text.split():
+        candidate = token.strip("([{<\"'").rstrip(".,;:!?)]}>\"'")
+        video_id = extract_video_id(candidate)
+        if not video_id:
+            continue
+        if video_id not in seen:
+            found.append(video_id)
+            seen.add(video_id)
+    return found
 
 
 def extract_playlist_id(url_or_id: str) -> Optional[str]:
@@ -161,17 +208,21 @@ async def search(query: str, max_results: int = 10) -> list[dict]:
         return []
 
 
-def _playlist_entries_from_info(info: dict) -> list[dict]:
-    """Normalize yt-dlp playlist entries and skip invalid/deleted items."""
+def _playlist_entries_from_info(info: dict) -> tuple[list[dict], int]:
+    """Normalize yt-dlp playlist entries and count skipped invalid/deleted items."""
     videos = []
+    skipped_count = 0
     for entry in (info or {}).get("entries", []):
         if not entry:
+            skipped_count += 1
             continue
         vid_id = entry.get("id")
         title = entry.get("title", "Unknown")
         if not vid_id or not _VIDEO_ID_RE.match(vid_id):
+            skipped_count += 1
             continue
         if title in {"[Deleted video]", "[Private video]"}:
+            skipped_count += 1
             continue
         videos.append({
             "video_id": vid_id,
@@ -183,7 +234,7 @@ def _playlist_entries_from_info(info: dict) -> list[dict]:
             "view_count": entry.get("view_count"),
             "is_short": _is_short_url(entry.get("url")),
         })
-    return videos
+    return videos, skipped_count
 
 
 async def extract_playlist_metadata(url: str, max_items: int = 200) -> Optional[dict]:
@@ -201,11 +252,13 @@ async def extract_playlist_metadata(url: str, max_items: int = 200) -> Optional[
                 info = ydl.extract_info(url, download=False)
                 if not info:
                     return None
+                entries, skipped_count = _playlist_entries_from_info(info)
                 return {
                     "playlist_id": playlist_id,
                     "title": info.get("title", "Unknown Playlist"),
                     "source_url": url,
-                    "entries": _playlist_entries_from_info(info),
+                    "entries": entries,
+                    "skipped_count": skipped_count,
                 }
         except Exception as e:
             logger.error(f"Playlist extraction failed for {url}: {e}")

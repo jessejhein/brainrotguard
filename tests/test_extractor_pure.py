@@ -5,6 +5,7 @@ import pytest
 from youtube.extractor import (
     _playlist_entries_from_info,
     extract_video_id,
+    extract_video_ids,
     extract_playlist_id,
     format_duration,
     _safe_thumbnail,
@@ -18,6 +19,7 @@ class TestExtractVideoId:
         # Standard URLs
         ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "dQw4w9WgXcQ"),
         ("http://youtube.com/watch?v=dQw4w9WgXcQ", "dQw4w9WgXcQ"),
+        ("https://m.youtube.com/watch?v=dQw4w9WgXcQ", "dQw4w9WgXcQ"),
         ("https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ"),
         # Shorts URL
         ("https://www.youtube.com/shorts/dQw4w9WgXcQ", "dQw4w9WgXcQ"),
@@ -35,11 +37,37 @@ class TestExtractVideoId:
         "",
         "not a video!",
         "https://example.com/watch?v=abc",
+        "https://notyoutube.com/watch?v=dQw4w9WgXcQ",
+        "https://www.notyoutube.com/watch?v=dQw4w9WgXcQ",
+        "https://evil.example/youtube.com/watch?v=dQw4w9WgXcQ",
+        "https://youtu.be.evil.example/dQw4w9WgXcQ",
         "12345",  # Too short
         "dQw4w9WgXcQ_extra",  # Too long
     ])
     def test_invalid_returns_none(self, input_val):
         assert extract_video_id(input_val) is None
+
+
+class TestExtractVideoIds:
+    def test_extracts_unique_ids_in_message_order(self):
+        text = (
+            "first https://youtu.be/dQw4w9WgXcQ "
+            "duplicate https://www.youtube.com/watch?v=dQw4w9WgXcQ "
+            "second https://www.youtube.com/shorts/jjpjjcMeujM"
+        )
+
+        assert extract_video_ids(text) == ["dQw4w9WgXcQ", "jjpjjcMeujM"]
+
+    def test_accepts_raw_single_video_id(self):
+        assert extract_video_ids("dQw4w9WgXcQ") == ["dQw4w9WgXcQ"]
+
+    def test_rejects_non_youtube_hosts(self):
+        text = (
+            "https://notyoutube.com/watch?v=dQw4w9WgXcQ "
+            "https://youtu.be.evil.example/jjpjjcMeujM"
+        )
+
+        assert extract_video_ids(text) == []
 
 
 class TestExtractPlaylistId:
@@ -88,12 +116,13 @@ class TestPlaylistEntriesFromInfo:
             ]
         }
 
-        entries = _playlist_entries_from_info(info)
+        entries, skipped_count = _playlist_entries_from_info(info)
 
         assert [entry["video_id"] for entry in entries] == ["dQw4w9WgXcQ", "jjpjjcMeujM"]
         assert entries[0]["channel_name"] == "Channel A"
         assert entries[1]["channel_name"] == "Channel B"
         assert entries[1]["is_short"] is True
+        assert skipped_count == 3
 
 
 class TestFormatDuration:

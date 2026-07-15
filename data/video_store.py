@@ -790,16 +790,19 @@ class VideoStore:
     def delete_playlist(self, playlist_id: int, profile_id: str = "default") -> bool:
         """Delete a playlist and its items for a profile."""
         with self._lock:
+            playlist = self.conn.execute(
+                "SELECT id FROM playlists WHERE id = ? AND profile_id = ?",
+                (playlist_id, profile_id),
+            ).fetchone()
+            if not playlist:
+                return False
             self.conn.execute(
                 "DELETE FROM playlist_items WHERE playlist_id = ?",
                 (playlist_id,),
             )
-            cursor = self.conn.execute(
-                "DELETE FROM playlists WHERE id = ? AND profile_id = ?",
-                (playlist_id, profile_id),
-            )
+            self.conn.execute("DELETE FROM playlists WHERE id = ?", (playlist_id,))
             self.conn.commit()
-            return cursor.rowcount > 0
+            return True
 
     def add_playlist_item(self, playlist_id: int, video: dict, position: Optional[int] = None,
                           profile_id: str = "default") -> Optional[dict]:

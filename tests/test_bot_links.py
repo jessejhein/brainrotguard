@@ -2,8 +2,10 @@
 
 import asyncio
 
+from telegram.ext import CommandHandler
+
 from bot.telegram_bot import BrainRotGuardBot
-from config import AppConfig, Config, TelegramConfig
+from config import AppConfig, Config, TelegramConfig, WebConfig
 from data.video_store import VideoStore
 
 
@@ -31,7 +33,15 @@ class _DummyContext:
         self.args = args or []
 
 
-def _make_bot(tmp_path, *, admin_chat_id: str = "1") -> tuple[BrainRotGuardBot, VideoStore]:
+class _DummyApp:
+    def __init__(self):
+        self.handlers = []
+
+    def add_handler(self, handler):
+        self.handlers.append(handler)
+
+
+def _make_bot(tmp_path, *, admin_chat_id: str = "1", base_url: str = "") -> tuple[BrainRotGuardBot, VideoStore]:
     store = VideoStore(str(tmp_path / "videos.db"))
     store.create_profile("default", "Default")
     bot = BrainRotGuardBot(
@@ -40,10 +50,29 @@ def _make_bot(tmp_path, *, admin_chat_id: str = "1") -> tuple[BrainRotGuardBot, 
         video_store=store,
         config=Config(
             app=AppConfig(locale="en"),
+            web=WebConfig(base_url=base_url),
             telegram=TelegramConfig(bot_token="token", admin_chat_id=admin_chat_id),
         ),
     )
     return bot, store
+
+
+def test_register_handlers_includes_link_aliases(tmp_path):
+    bot, store = _make_bot(tmp_path)
+    try:
+        app = _DummyApp()
+        bot._app = app
+
+        bot._register_handlers()
+
+        command_sets = [
+            handler.commands for handler in app.handlers
+            if isinstance(handler, CommandHandler)
+        ]
+        assert any({"addlink", "approveurl"}.issubset(commands) for commands in command_sets)
+        assert any({"importplaylist", "import_playlist"}.issubset(commands) for commands in command_sets)
+    finally:
+        store.close()
 
 
 def test_handle_text_message_ignores_non_links_without_wizard(tmp_path):
@@ -125,6 +154,56 @@ def test_addlink_approves_video_with_category(tmp_path):
         store.close()
 
 
+def test_addlink_reply_includes_absolute_child_url_when_base_url_configured(tmp_path):
+    bot, store = _make_bot(tmp_path, base_url="http://brg.local:8080")
+    try:
+        update = _DummyUpdate("/addlink https://youtu.be/dQw4w9WgXcQ edu")
+        context = _DummyContext(["https://youtu.be/dQw4w9WgXcQ", "edu"])
+
+        async def _fake_extract(video_id: str):
+            return {
+                "video_id": video_id,
+                "title": "Test Video",
+                "channel_name": "Test Channel",
+                "channel_id": "UC123",
+                "thumbnail_url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+                "duration": 120,
+                "view_count": 99,
+                "is_short": False,
+            }
+
+        bot._extract_video_metadata = _fake_extract
+        asyncio.run(bot._cmd_addlink(update, context))
+
+        assert update.message.replies
+        assert "http://brg.local:8080/watch/dQw4w9WgXcQ" in update.message.replies[-1][0]
+    finally:
+        store.close()
+
+
+def test_addlink_reply_falls_back_to_relative_child_url_without_base_url(tmp_path):
+    bot, store = _make_bot(tmp_path)
+    try:
+        update = _DummyUpdate("/addlink https://youtu.be/dQw4w9WgXcQ")
+        context = _DummyContext(["https://youtu.be/dQw4w9WgXcQ"])
+
+        async def _fake_extract(video_id: str):
+            return {
+                "video_id": video_id,
+                "title": "Test Video",
+                "channel_name": "Test Channel",
+                "thumbnail_url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            }
+
+        bot._extract_video_metadata = _fake_extract
+        asyncio.run(bot._cmd_addlink(update, context))
+
+        assert update.message.replies
+        assert "/watch/dQw4w9WgXcQ" in update.message.replies[-1][0]
+    finally:
+        store.close()
+
+
 def test_addlink_rejects_invalid_url(tmp_path):
     bot, store = _make_bot(tmp_path)
     try:
@@ -135,6 +214,74 @@ def test_addlink_rejects_invalid_url(tmp_path):
 
         assert update.message.replies
         assert "YouTube" in update.message.replies[0][0]
+    finally:
+        store.close()
+
+
+def test_addlink_rejects_multiple_video_urls(tmp_path):
+    bot, store = _make_bot(tmp_path)
+    try:
+        text = "https://youtu.be/dQw4w9WgXcQ https://youtu.be/jjpjjcMeujM"
+        update = _DummyUpdate(f"/addlink {text}")
+        context = _DummyContext([text])
+
+        async def _fake_extract(video_id: str):
+            raise AssertionError("multiple URLs should be rejected before metadata fetch")
+
+        bot._extract_video_metadata = _fake_extract
+        asyncio.run(bot._cmd_addlink(update, context))
+
+        assert update.message.replies
+        assert "one YouTube video" in update.message.replies[0][0]
+        assert store.get_video("dQw4w9WgXcQ", profile_id="default") is None
+        assert store.get_video("jjpjjcMeujM", profile_id="default") is None
+    finally:
+        store.close()
+
+
+def test_addlink_rejects_multiple_video_urls_when_args_are_split(tmp_path):
+    bot, store = _make_bot(tmp_path)
+    try:
+        update = _DummyUpdate("/addlink https://youtu.be/dQw4w9WgXcQ https://youtu.be/jjpjjcMeujM")
+        context = _DummyContext([
+            "https://youtu.be/dQw4w9WgXcQ",
+            "https://youtu.be/jjpjjcMeujM",
+        ])
+
+        async def _fake_extract(video_id: str):
+            raise AssertionError("multiple URLs should be rejected before metadata fetch")
+
+        bot._extract_video_metadata = _fake_extract
+        asyncio.run(bot._cmd_addlink(update, context))
+
+        assert update.message.replies
+        assert "one YouTube video" in update.message.replies[0][0]
+        assert store.get_video("dQw4w9WgXcQ", profile_id="default") is None
+        assert store.get_video("jjpjjcMeujM", profile_id="default") is None
+    finally:
+        store.close()
+
+
+def test_addlink_rejects_multiple_video_urls_with_trailing_category(tmp_path):
+    bot, store = _make_bot(tmp_path)
+    try:
+        update = _DummyUpdate("/addlink https://youtu.be/dQw4w9WgXcQ https://youtu.be/jjpjjcMeujM edu")
+        context = _DummyContext([
+            "https://youtu.be/dQw4w9WgXcQ",
+            "https://youtu.be/jjpjjcMeujM",
+            "edu",
+        ])
+
+        async def _fake_extract(video_id: str):
+            raise AssertionError("multiple URLs should be rejected before metadata fetch")
+
+        bot._extract_video_metadata = _fake_extract
+        asyncio.run(bot._cmd_addlink(update, context))
+
+        assert update.message.replies
+        assert "one YouTube video" in update.message.replies[0][0]
+        assert store.get_video("dQw4w9WgXcQ", profile_id="default") is None
+        assert store.get_video("jjpjjcMeujM", profile_id="default") is None
     finally:
         store.close()
 
@@ -201,6 +348,33 @@ def test_plain_text_link_approves_video_as_fun(tmp_path):
         store.close()
 
 
+def test_plain_text_link_reply_includes_absolute_child_url_when_base_url_configured(tmp_path):
+    bot, store = _make_bot(tmp_path, base_url="http://brg.local:8080")
+    try:
+        update = _DummyUpdate("https://youtu.be/dQw4w9WgXcQ")
+
+        async def _fake_extract(video_id: str):
+            return {
+                "video_id": video_id,
+                "title": "Test Video",
+                "channel_name": "Test Channel",
+                "channel_id": "UC123",
+                "thumbnail_url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+                "duration": 120,
+                "view_count": 99,
+                "is_short": False,
+            }
+
+        bot._extract_video_metadata = _fake_extract
+        handled = asyncio.run(bot._handle_plain_text_link(update, _DummyContext()))
+
+        assert handled is True
+        assert update.message.replies
+        assert "http://brg.local:8080/watch/dQw4w9WgXcQ" in update.message.replies[-1][0]
+    finally:
+        store.close()
+
+
 def test_plain_text_link_requires_admin(tmp_path):
     bot, store = _make_bot(tmp_path)
     try:
@@ -211,5 +385,25 @@ def test_plain_text_link_requires_admin(tmp_path):
         assert update.message.replies
         assert "parent/admin" in update.message.replies[0][0]
         assert store.get_video("dQw4w9WgXcQ", profile_id="default") is None
+    finally:
+        store.close()
+
+
+def test_plain_text_link_rejects_multiple_video_urls(tmp_path):
+    bot, store = _make_bot(tmp_path)
+    try:
+        update = _DummyUpdate("https://youtu.be/dQw4w9WgXcQ and https://youtu.be/jjpjjcMeujM")
+
+        async def _fake_extract(video_id: str):
+            raise AssertionError("multiple URLs should be rejected before metadata fetch")
+
+        bot._extract_video_metadata = _fake_extract
+        handled = asyncio.run(bot._handle_plain_text_link(update, _DummyContext()))
+
+        assert handled is True
+        assert update.message.replies
+        assert "one YouTube video" in update.message.replies[0][0]
+        assert store.get_video("dQw4w9WgXcQ", profile_id="default") is None
+        assert store.get_video("jjpjjcMeujM", profile_id="default") is None
     finally:
         store.close()

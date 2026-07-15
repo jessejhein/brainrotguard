@@ -22,8 +22,12 @@ class _DummyCallbackQuery:
 
 
 class _DummyUpdate:
-    def __init__(self, *, chat_id: int | None, user_id: int | None, callback: bool = False):
-        self.effective_chat = None if chat_id is None else type("Chat", (), {"id": chat_id})()
+    def __init__(self, *, chat_id: int | None, user_id: int | None,
+                 chat_type: str | None = None, callback: bool = False):
+        attrs = {"id": chat_id}
+        if chat_type:
+            attrs["type"] = chat_type
+        self.effective_chat = None if chat_id is None else type("Chat", (), attrs)()
         self.effective_user = None if user_id is None else type("User", (), {"id": user_id})()
         self.effective_message = _DummyMessage()
         self.message = None if callback else self.effective_message
@@ -60,7 +64,34 @@ def test_check_admin_allows_configured_group_chat(tmp_path):
 def test_check_admin_allows_listed_direct_message_user(tmp_path):
     bot, store = _make_bot(tmp_path, admin_user_ids="123456,987654")
     try:
-        update = _DummyUpdate(chat_id=123456, user_id=123456)
+        update = _DummyUpdate(chat_id=123456, user_id=123456, chat_type="private")
+        assert bot._check_admin(update) is True
+    finally:
+        store.close()
+
+
+def test_check_admin_allows_legacy_direct_message_user(tmp_path):
+    bot, store = _make_bot(tmp_path, admin_chat_id="123456")
+    try:
+        update = _DummyUpdate(chat_id=123456, user_id=123456, chat_type="private")
+        assert bot._check_admin(update) is True
+    finally:
+        store.close()
+
+
+def test_check_admin_rejects_legacy_user_in_unrelated_group(tmp_path):
+    bot, store = _make_bot(tmp_path, admin_chat_id="123456")
+    try:
+        update = _DummyUpdate(chat_id=-100999888, user_id=123456, chat_type="supergroup")
+        assert bot._check_admin(update) is False
+    finally:
+        store.close()
+
+
+def test_check_admin_allows_listed_user_in_configured_admin_group(tmp_path):
+    bot, store = _make_bot(tmp_path, admin_chat_id="-100123456", admin_user_ids="123456")
+    try:
+        update = _DummyUpdate(chat_id=-100123456, user_id=123456, chat_type="supergroup")
         assert bot._check_admin(update) is True
     finally:
         store.close()
@@ -69,7 +100,7 @@ def test_check_admin_allows_listed_direct_message_user(tmp_path):
 def test_check_admin_rejects_unlisted_direct_message_user_when_admin_chat_is_group(tmp_path):
     bot, store = _make_bot(tmp_path, admin_user_ids="123456,987654")
     try:
-        update = _DummyUpdate(chat_id=555555, user_id=555555)
+        update = _DummyUpdate(chat_id=555555, user_id=555555, chat_type="private")
         assert bot._check_admin(update) is False
     finally:
         store.close()
@@ -78,8 +109,7 @@ def test_check_admin_rejects_unlisted_direct_message_user_when_admin_chat_is_gro
 def test_check_admin_rejects_listed_user_in_unrelated_group(tmp_path):
     bot, store = _make_bot(tmp_path, admin_user_ids="123456,987654")
     try:
-        update = _DummyUpdate(chat_id=-100999888, user_id=123456)
+        update = _DummyUpdate(chat_id=-100999888, user_id=123456, chat_type="supergroup")
         assert bot._check_admin(update) is False
     finally:
         store.close()
-

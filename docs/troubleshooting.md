@@ -23,11 +23,13 @@
 **`/importplaylist` fails or imports fewer videos than expected**
 - Confirm the URL is a real YouTube playlist URL with a `list=` parameter.
 - Private or deleted playlist entries are skipped during import.
+- If the bot reports skipped entries, those items were private, deleted, or did not resolve to valid YouTube video IDs.
 - If yt-dlp can't read the playlist, rebuild the container to refresh yt-dlp.
 
 **A QR code opens the login page instead of the video**
 - That's expected when the child is not logged in yet. BrainRotGuard preserves the target and returns to the requested `/watch/...` or `/playlists/...` URL after a successful login.
 - If it still drops the child at the homepage, verify you're on a current build with deep-link login support.
+- If Telegram replies show relative links like `/watch/...` instead of full URLs, set `BRG_BASE_URL` to the LAN address the child device can open.
 
 **The kid's tablet can still reach youtube.com**
 - DNS changes can take a few minutes to propagate. Try clearing the tablet's DNS cache or restarting its WiFi.
