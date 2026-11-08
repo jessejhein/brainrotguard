@@ -90,6 +90,26 @@ class DatabaseConfig:
 
 
 @dataclass
+class TriageConfig:
+    """Optional outbound triage bridge (BrainRotGuard -> Hermes -> verdict).
+
+    Disabled by default. See docs/triage.md for the contract.
+    """
+    enabled: bool = False
+    mode: str = "shadow"          # "shadow" only for now; "auto" is not implemented yet
+    url: str = ""                 # Hermes webhook route, e.g. http://host:8644/p/brgtriage/webhooks/brg-request
+    secret: str = ""              # HMAC secret for our outbound POST
+    callback_secret: str = ""     # HMAC secret Hermes uses on the verdict callback
+    deadline_s: int = 60          # skip the threaded reply after this many seconds
+    reply_enabled: bool = True    # post the triage summary as a threaded reply
+
+    def __post_init__(self):
+        # Only "shadow" is implemented; anything else is rejected loudly at startup
+        # rather than silently downgraded here.
+        self.mode = (self.mode or "shadow").strip().lower()
+
+
+@dataclass
 class WatchLimitsConfig:
     """Watch time limits configuration."""
     daily_limit_minutes: int = 0
@@ -106,6 +126,7 @@ class Config:
     youtube: YouTubeConfig = field(default_factory=YouTubeConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     watch_limits: WatchLimitsConfig = field(default_factory=WatchLimitsConfig)
+    triage: TriageConfig = field(default_factory=TriageConfig)
 
     @classmethod
     def from_yaml(cls, path: Path | str) -> "Config":
@@ -124,6 +145,7 @@ class Config:
         youtube_data = expanded_config.get("youtube", {})
         database_data = expanded_config.get("database", {})
         watch_limits_data = expanded_config.get("watch_limits", {})
+        triage_data = expanded_config.get("triage", {}) or {}
 
         return cls(
             app=AppConfig(**app_data),
@@ -132,6 +154,7 @@ class Config:
             youtube=YouTubeConfig(**youtube_data),
             database=DatabaseConfig(**database_data),
             watch_limits=WatchLimitsConfig(**watch_limits_data),
+            triage=TriageConfig(**triage_data),
         )
 
     @classmethod
@@ -170,6 +193,15 @@ class Config:
                 daily_limit_minutes=int(os.environ.get("BRG_DAILY_LIMIT_MINUTES", "0")),
                 timezone=os.environ.get("BRG_TIMEZONE", "America/New_York"),
                 notify_on_limit=os.environ.get("BRG_NOTIFY_ON_LIMIT", "true").lower() == "true",
+            ),
+            triage=TriageConfig(
+                enabled=os.environ.get("BRG_TRIAGE_ENABLED", "false").lower() == "true",
+                mode=os.environ.get("BRG_TRIAGE_MODE", "shadow"),
+                url=os.environ.get("BRG_TRIAGE_URL", ""),
+                secret=os.environ.get("BRG_TRIAGE_SECRET", ""),
+                callback_secret=os.environ.get("BRG_TRIAGE_CALLBACK_SECRET", ""),
+                deadline_s=int(os.environ.get("BRG_TRIAGE_DEADLINE_S", "60")),
+                reply_enabled=os.environ.get("BRG_TRIAGE_REPLY_ENABLED", "true").lower() == "true",
             ),
         )
 
@@ -223,6 +255,21 @@ def load_config(config_path: str | None = None) -> Config:
             logger.warning(
                 "telegram.admin_user_ids contains non-numeric entries: %s",
                 ", ".join(invalid),
+            )
+
+    triage = config.triage
+    if triage.enabled:
+        missing = [name for name in ("url", "secret", "callback_secret") if not getattr(triage, name)]
+        if missing:
+            logger.error(
+                "triage.enabled is set but %s missing — the triage bridge will stay disabled",
+                ", ".join(missing),
+            )
+            triage.enabled = False
+        if triage.mode != "shadow":
+            logger.warning(
+                "triage.mode %r is not implemented yet — running shadow (describe only, no action)",
+                triage.mode,
             )
 
     # Validate timezone at startup

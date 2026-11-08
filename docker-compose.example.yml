@@ -11,6 +11,11 @@ services:
       - BRG_ADMIN_USER_IDS=${BRG_ADMIN_USER_IDS:-}
       - BRG_PIN=${BRG_PIN:-}
       - BRG_BASE_URL=${BRG_BASE_URL:-}
+      - BRG_TRIAGE_ENABLED=${BRG_TRIAGE_ENABLED:-false}
+      - BRG_TRIAGE_URL=${BRG_TRIAGE_URL:-}
+      - BRG_TRIAGE_SECRET=${BRG_TRIAGE_SECRET:-}
+      - BRG_TRIAGE_CALLBACK_SECRET=${BRG_TRIAGE_CALLBACK_SECRET:-}
+      - BRG_TRIAGE_DEADLINE_S=${BRG_TRIAGE_DEADLINE_S:-60}
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - brg_db:/app/db
