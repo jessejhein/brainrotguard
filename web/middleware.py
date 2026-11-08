@@ -55,6 +55,10 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if request.url.path.startswith(_API_AUTH_EXEMPT):
             return await call_next(request)
+        # Internal machine-to-machine endpoints authenticate themselves (HMAC),
+        # never with a browser session.
+        if request.url.path.startswith("/internal/"):
+            return await call_next(request)
 
         # Profile-based auth: check if child_id is in session
         if request.session.get("child_id"):
