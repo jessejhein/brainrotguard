@@ -26,7 +26,7 @@ class SetupMixin:
 
     def _build_setup_hub(self, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
         """Build the setup hub message text + 4 category buttons with current status."""
-        from version import __version__
+        from version import version_label
         profiles = self._get_profiles()
 
         # Children status
@@ -94,7 +94,7 @@ class SetupMixin:
         intro = self.tr(
             "{app_name} v{version}\n\nYouTube approval system for kids. Tap a section below to set things up.",
             app_name=self.tr("App Name"),
-            version=__version__,
+            version=version_label(),
         )
         text = (
             f"{intro}\n\n"

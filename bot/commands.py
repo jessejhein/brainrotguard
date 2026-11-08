@@ -180,10 +180,10 @@ class CommandsMixin:
     async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._require_admin(update):
             return
-        from version import __version__
+        from version import version_label
         help_link = self.tr("📖 [Full command reference]({url})\n",
                             url="https://github.com/GHJJ123/brainrotguard/blob/main/docs/telegram-commands.md")
-        body = build_help_text(self.tr, self.tr("App Name"), __version__)
+        body = build_help_text(self.tr, self.tr("App Name"), version_label())
         await update.effective_message.reply_text(_md(
             body
             + help_link
@@ -512,7 +512,7 @@ class CommandsMixin:
         if not await self._require_admin(update):
             return
         import os
-        from version import __version__
+        from version import version_label
         changelog_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "CHANGELOG.md")
         try:
             with open(changelog_path, "r") as f:
@@ -526,7 +526,7 @@ class CommandsMixin:
             latest = self.tr(
                 "{app_name} v{version}\n\n{content}",
                 app_name=self.tr("App Name"),
-                version=__version__,
+                version=version_label(),
                 content=latest,
             )
             if len(latest) > 3500:

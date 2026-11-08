@@ -7,6 +7,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Build provenance, shown as the version suffix (see version.py). Empty = detect from git if present.
+ARG BRG_BUILD_SHA=""
+ENV BRG_BUILD_SHA=${BRG_BUILD_SHA}
+
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gosu && rm -rf /var/lib/apt/lists/* \
     && useradd -r -m -s /bin/false appuser && mkdir -p /app/db && chown -R appuser:appuser /app
 

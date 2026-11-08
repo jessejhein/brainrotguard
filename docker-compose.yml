@@ -1,6 +1,9 @@
 services:
   brainrotguard:
-    build: .
+    build:
+      context: .
+      args:
+        BRG_BUILD_SHA: ${BRG_BUILD_SHA:-}
     image: brainrotguard
     container_name: brainrotguard
     restart: unless-stopped
