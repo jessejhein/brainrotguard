@@ -24,6 +24,13 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMP_TAR="/tmp/brainrotguard.tar"
 
+# Build provenance baked into the image (shown as the version suffix).
+BRG_BUILD_SHA="$(git -C "$SCRIPT_DIR" rev-parse --short=7 HEAD 2>/dev/null || true)"
+if [ -n "$BRG_BUILD_SHA" ] && [ -n "$(git -C "$SCRIPT_DIR" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    BRG_BUILD_SHA="${BRG_BUILD_SHA}-dirty"
+fi
+export BRG_BUILD_SHA
+
 echo -e "${CYAN}=== Deploying BrainRotGuard to $TARGET ===${NC}"
 
 echo -e "${YELLOW}Creating archive...${NC}"
@@ -54,6 +61,7 @@ PORT=\${PORT:-8080}
 grep -q '^BRG_BASE_URL=' .env 2>/dev/null && sed -i "s|^BRG_BASE_URL=.*|BRG_BASE_URL=http://\${HOST_IP}:\${PORT}|" .env || echo "BRG_BASE_URL=http://\${HOST_IP}:\${PORT}" >> .env
 echo "Auto-detected base_url: http://\${HOST_IP}:\${PORT}"
 docker compose down 2>/dev/null || true
+export BRG_BUILD_SHA='${BRG_BUILD_SHA}'
 docker compose build
 docker compose up -d
 docker image prune -f

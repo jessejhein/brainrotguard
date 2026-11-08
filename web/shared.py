@@ -10,7 +10,7 @@ from pathlib import Path
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from version import __version__
+from version import version_label
 from youtube.extractor import format_duration
 from i18n import app_name, t, category_label, day_label, format_time, html_lang
 
@@ -67,7 +67,7 @@ def _jinja_app_name(ctx):
 
 # Template globals
 templates.env.globals["format_duration"] = format_duration
-templates.env.globals["app_version"] = __version__
+templates.env.globals["app_version"] = version_label()
 templates.env.globals["t"] = _jinja_t
 templates.env.globals["cat_label"] = _jinja_cat_label
 templates.env.globals["day_label"] = _jinja_day_label
