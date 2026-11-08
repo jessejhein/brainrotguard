@@ -2,6 +2,7 @@
 
 import logging
 import re
+from dataclasses import dataclass
 from io import BytesIO
 from urllib.parse import urlparse
 
@@ -14,10 +15,17 @@ from youtube.extractor import format_duration, THUMB_ALLOWED_HOSTS
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class NotifyRef:
+    """Where a request notification landed, so a triage reply can thread onto it."""
+    chat_id: int
+    message_id: int
+
+
 class ApprovalMixin:
     """Approval-related methods extracted from BrainRotGuardBot."""
 
-    async def notify_new_request(self, video: dict, profile_id: str = "default") -> None:
+    async def notify_new_request(self, video: dict, profile_id: str = "default") -> "NotifyRef | None":
         """Send parent a notification about a new video request with Approve/Deny buttons."""
         if not self._app:
             logger.warning("Bot not started, cannot send notification")
@@ -115,34 +123,67 @@ class ApprovalMixin:
                         async with session.get(thumbnail_url) as resp:
                             if resp.status == 200:
                                 photo_data = BytesIO(await resp.read())
-                                await self._app.bot.send_photo(
+                                sent = await self._app.bot.send_photo(
                                     chat_id=self.admin_chat_target,
                                     photo=photo_data,
                                     caption=caption,
                                     reply_markup=keyboard,
                                     parse_mode=MD2,
                                 )
-                                return
+                                return NotifyRef(chat_id=sent.chat_id, message_id=sent.message_id)
                 except Exception as e:
                     logger.warning(f"Failed to send thumbnail: {e}")
 
             # Fallback: send text message without photo
-            await self._app.bot.send_message(
+            sent = await self._app.bot.send_message(
                 chat_id=self.admin_chat_target,
                 text=caption,
                 reply_markup=keyboard,
                 parse_mode=MD2,
             )
+            return NotifyRef(chat_id=sent.chat_id, message_id=sent.message_id)
         except Exception as e:
             logger.warning(f"Markdown notification failed for video {video_id}: {e}")
             try:
-                await self._app.bot.send_message(
+                sent = await self._app.bot.send_message(
                     chat_id=self.admin_chat_target,
                     text=plain_text,
                     reply_markup=keyboard,
                 )
+                return NotifyRef(chat_id=sent.chat_id, message_id=sent.message_id)
             except Exception as fallback_error:
                 logger.error(f"Failed to notify about video {video_id}: {fallback_error}")
+        return None
+
+    async def send_triage_reply(self, chat_id, message_id, text: str) -> bool:
+        """Post the triage summary as a reply to the request notification.
+
+        Threading is best-effort: if Telegram rejects the reply target (deleted
+        message, lost rights) we still deliver the text unthreaded rather than
+        losing the verdict.
+        """
+        if not self._app:
+            return False
+        kwargs = {}
+        try:
+            from telegram import ReplyParameters
+        except ImportError:  # python-telegram-bot < 20.8
+            kwargs["reply_to_message_id"] = message_id
+            kwargs["allow_sending_without_reply"] = True
+        else:
+            kwargs["reply_parameters"] = ReplyParameters(
+                message_id=message_id, allow_sending_without_reply=True)
+        try:
+            await self._app.bot.send_message(chat_id=chat_id, text=text, **kwargs)
+            return True
+        except Exception as exc:
+            logger.warning("Threaded triage reply failed (%s); retrying unthreaded", exc)
+        try:
+            await self._app.bot.send_message(chat_id=chat_id, text=text)
+            return True
+        except Exception as exc:
+            logger.error("Triage reply failed: %s", exc)
+            return False
 
     async def _cb_child_select(self, query, update: Update, context, profile_id: str) -> None:
         """Handle child selector button press."""
