@@ -33,6 +33,7 @@ class BrainRotGuard:
         self.config = config
         self.video_store = None
         self.bot = None
+        self.triage = None
         self.running = False
 
     def _bootstrap_profiles(self) -> None:
@@ -72,10 +73,26 @@ class BrainRotGuard:
             self.bot.on_video_change = lambda: invalidate_catalog_cache(state)
             logger.info("Telegram bot initialized")
 
+        # Optional triage bridge (describe-only in phase 1; see docs/triage.md)
+        if self.config.triage and self.config.triage.enabled:
+            from triage.service import TriageService
+            from triage.store import TriageStore
+            self.triage = TriageService(
+                self.config.triage,
+                self.video_store,
+                TriageStore(self.config.database.path),
+                bot=self.bot,
+            )
+            logger.info("Triage bridge enabled (mode=%s)", self.triage.mode)
+
         # Wire dependencies onto app.state (replaces old setup() call)
         async def notify_callback(video: dict, profile_id: str = "default"):
+            ref = None
             if self.bot:
-                await self.bot.notify_new_request(video, profile_id=profile_id)
+                ref = await self.bot.notify_new_request(video, profile_id=profile_id)
+            if self.triage:
+                await self.triage.on_request(video, profile_id, ref)
+            return ref
 
         async def time_limit_cb(used_min: float, limit_min: int,
                                 category: str = "", profile_id: str = "default"):
@@ -85,6 +102,8 @@ class BrainRotGuard:
 
         state = fastapi_app.state
         state.video_store = self.video_store
+        state.bot = self.bot
+        state.triage = self.triage
         state.notify_callback = notify_callback
         state.time_limit_notify_cb = time_limit_cb
         state.youtube_config = self.config.youtube
