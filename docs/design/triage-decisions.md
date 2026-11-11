@@ -49,7 +49,7 @@ kid tablet --POST /request--> BRG (dug:8080)
                                |      message_id retained for the reply
                                |  t0+1s: background task POSTs the request context
                                v
-                        POST http://192.168.42.159:<port>/p/brgtriage/webhooks/brg-request
+                        POST http://hookhand.lan:8644/p/brgtriage/webhooks/brg-request
                                |  HMAC-SHA256 body signature
                                v
                         Hermes profile "brgtriage" (webhook route → 202 accepted, async turn)
