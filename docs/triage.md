@@ -55,6 +55,16 @@ inside the container before enabling:
 podman exec brainrotguard getent hosts dug.lan
 ```
 
+## Enrichment (agent side)
+
+The agent fetches the video's metadata **and its captions** before judging:
+`yt-dlp -J` for description/tags/chapters, then a caption scan that returns exact
+profanity counts (strong/mild, with context) and a bounded transcript excerpt.
+A title alone cannot tell a science demonstration from actual harm, and the parent
+is reading the title in a hurry — that is the agent's job. When no caption track
+exists the verdict is still produced but `enrichment.transcript` is `false`, so the
+parent can tell "checked" from "could not check".
+
 ## Wire contract
 
 Outbound body (JSON, signed): the deterministic context only — `request_id`
