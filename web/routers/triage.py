@@ -18,6 +18,23 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# A verdict is a few hundred bytes. Bound the read so an unauthenticated caller
+# cannot make the process buffer an arbitrary body before the HMAC is checked.
+MAX_BODY_BYTES = 16 * 1024
+
+
+async def _read_body(request: Request) -> bytes | None:
+    """Read the request body up to ``MAX_BODY_BYTES``; ``None`` when over the cap."""
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+        return None
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > MAX_BODY_BYTES:
+            return None
+    return bytes(body)
+
 
 @router.post("/internal/triage/{request_id}")
 async def triage_verdict(request: Request, request_id: str):
@@ -25,7 +42,11 @@ async def triage_verdict(request: Request, request_id: str):
     if service is None or not service.enabled:
         return JSONResponse({"error": "disabled"}, status_code=404)
 
-    raw = await request.body()
+    raw = await _read_body(request)
+    if raw is None:
+        logger.warning("Triage callback rejected for %s: body too large", request_id)
+        return JSONResponse({"error": "payload too large"}, status_code=413)
+
     timestamp = request.headers.get("X-BRG-Timestamp", "")
     signature = request.headers.get("X-BRG-Signature", "")
     if not verify(service.config.callback_secret, raw, timestamp, signature):

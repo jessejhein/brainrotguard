@@ -49,6 +49,21 @@ def test_word_filter_hits_are_case_insensitive(video_store, video):
     assert ctx["word_filter_hits"] == ["minecraft"]
 
 
+def test_word_filter_hits_require_a_word_boundary(video_store):
+    """Substring hits the app's own \\b filter never fires on must not be reported."""
+    video_store.add_word_filter("ass")
+    video = video_store.add_video("xyz789", "Classic car restoration", "SomeCreator",
+                                  profile_id="default")
+    assert build_request_context(video_store, video, "default")["word_filter_hits"] == []
+
+
+def test_word_filter_hits_match_a_real_word(video_store):
+    video_store.add_word_filter("roblox")
+    video = video_store.add_video("xyz790", "Fun ROBLOX obby", "SomeCreator",
+                                  profile_id="default")
+    assert build_request_context(video_store, video, "default")["word_filter_hits"] == ["roblox"]
+
+
 def test_denied_before_flag(video_store, video):
     video_store.update_status("abc123", "denied", profile_id="default")
     ctx = build_request_context(video_store, video, "default")

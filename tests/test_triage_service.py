@@ -42,10 +42,10 @@ def _verdict(**over):
     return payload
 
 
-def _service(video_store, tmp_path, *, bot=None, poster=None, enabled=True):
+def _service(video_store, tmp_path, *, bot=None, poster=None, enabled=True, deadline_s=60):
     cfg = TriageConfig(
         enabled=enabled, url="http://hermes.local:8644/p/brgtriage/webhooks/brg-request",
-        secret="out-secret", callback_secret="cb-secret", deadline_s=60,
+        secret="out-secret", callback_secret="cb-secret", deadline_s=deadline_s,
     )
     store = TriageStore(str(tmp_path / "triage.db"))
     svc = TriageService(cfg, video_store, store, bot=bot or FakeBot(), poster=poster)
@@ -249,3 +249,73 @@ def test_reply_failure_still_records_verdict(video_store, tmp_path):
 
     assert asyncio.run(go())["outcome"] == "logged"
     assert store.get("default:abc123")["verdict"] == "allow"
+
+
+# --- review fixes: derived rank, deadline timer, re-request push --------------
+
+
+def test_rank_is_derived_from_confidence_not_trusted():
+    """The payload's rank is advisory: stage 2 gates on the number, not the label."""
+    assert normalise_verdict(_verdict(confidence=0.20, rank="HIGH"))["rank"] == "LOW"
+    assert normalise_verdict(_verdict(confidence=0.91, rank="LOW"))["rank"] == "HIGH"
+
+
+def test_timeout_is_recorded_at_the_deadline_without_another_request(
+        video_store, tmp_path, monkeypatch):
+    """A request whose verdict never arrives is logged on time, not on the next request."""
+    monkeypatch.setattr("triage.service.TIMEOUT_GRACE_S", 0.0)
+    svc, store = _service(video_store, tmp_path, deadline_s=1)
+    video = _video(video_store)
+
+    async def go():
+        await svc.on_request(video, "default", NotifyRef(-100, 7))
+        await asyncio.gather(*list(svc._timers))
+
+    assert store.get("default:abc123") is None  # nothing recorded yet
+    asyncio.run(go())
+    row = store.get("default:abc123")
+    assert row is not None
+    assert row["outcome"] == "timeout"
+    assert row["verdict"] == "none"
+
+
+def test_verdict_cancels_the_timeout_timer(video_store, tmp_path, monkeypatch):
+    monkeypatch.setattr("triage.service.TIMEOUT_GRACE_S", 0.0)
+    svc, store = _service(video_store, tmp_path, deadline_s=1)
+    video = _video(video_store)
+
+    async def go():
+        await svc.on_request(video, "default", NotifyRef(-100, 7))
+        timer = svc._pending["default:abc123"].timer
+        assert timer is not None
+        result = await svc.handle_verdict("default:abc123", _verdict())
+        await asyncio.sleep(0.05)
+        return result, timer
+
+    result, timer = asyncio.run(go())
+    assert result["outcome"] == "replied"
+    assert timer.cancelled()
+    row = store.get("default:abc123")
+    assert row is not None and row["outcome"] == "replied"
+
+
+def test_rerequest_after_a_decision_does_not_push(video_store, tmp_path):
+    """A second notification for a decided video would only be dropped as duplicate."""
+    posted = []
+
+    async def poster(context, body):
+        posted.append(context["request_id"])
+        return True
+
+    svc, _ = _service(video_store, tmp_path, poster=poster)
+    video = _video(video_store)
+
+    async def go():
+        await svc.on_request(video, "default", NotifyRef(1, 2))
+        await asyncio.gather(*list(svc._tasks))
+        await svc.handle_verdict("default:abc123", _verdict())
+        await svc.on_request(video, "default", NotifyRef(1, 3))
+        await asyncio.gather(*list(svc._tasks))
+
+    asyncio.run(go())
+    assert posted == ["default:abc123"]

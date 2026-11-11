@@ -7,6 +7,7 @@ re-derive these rules, and it cannot override them.
 """
 
 from datetime import datetime, timezone
+import re
 
 TITLE_LIMIT = 300
 HISTORY_LIMIT = 10
@@ -57,8 +58,13 @@ def build_request_context(store, video: dict, profile_id: str = "default", *,
         other_profile = (row or {}).get("display_name") or other.get("profile_id")
 
     filters = store.get_word_filters_set()
-    title_lower = (video.get("title") or "").lower()
-    hits = sorted(word for word in filters if word and word.lower() in title_lower)
+    title = video.get("title") or ""
+    # Same semantics as the app's own filter (web/cache.py: \b…\b, case-insensitive).
+    # Substring matching here would report hits the deterministic layer never fires on.
+    hits = sorted(
+        word for word in filters
+        if word and re.search(r"\b" + re.escape(word) + r"\b", title, re.IGNORECASE)
+    )
 
     profiles = store.get_profiles()
     profile_row = store.get_profile(profile_id) or {}

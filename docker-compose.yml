@@ -20,6 +20,8 @@ services:
       - BRG_TRIAGE_SECRET=${BRG_TRIAGE_SECRET:-}
       - BRG_TRIAGE_CALLBACK_SECRET=${BRG_TRIAGE_CALLBACK_SECRET:-}
       - BRG_TRIAGE_DEADLINE_S=${BRG_TRIAGE_DEADLINE_S:-60}
+      - BRG_TRIAGE_MODE=${BRG_TRIAGE_MODE:-shadow}
+      - BRG_TRIAGE_REPLY_ENABLED=${BRG_TRIAGE_REPLY_ENABLED:-true}
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - brg_db:/app/db

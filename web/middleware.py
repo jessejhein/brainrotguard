@@ -55,9 +55,10 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if request.url.path.startswith(_API_AUTH_EXEMPT):
             return await call_next(request)
-        # Internal machine-to-machine endpoints authenticate themselves (HMAC),
-        # never with a browser session.
-        if request.url.path.startswith("/internal/"):
+        # Internal machine-to-machine endpoint: it authenticates itself (HMAC),
+        # never with a browser session. Narrow on purpose — a blanket /internal/
+        # exemption would leave every future route under that prefix open.
+        if request.url.path.startswith("/internal/triage/"):
             return await call_next(request)
 
         # Profile-based auth: check if child_id is in session

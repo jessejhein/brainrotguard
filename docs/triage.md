@@ -71,8 +71,9 @@ Verdict body (`POST /internal/triage/{request_id}`):
 ```
 
 Signed with `X-BRG-Timestamp` + `X-BRG-Signature` (same scheme, callback
-secret). `rank` is optional — it is derived from `confidence`
-(`HIGH ≥ 0.85`, `MEDIUM ≥ 0.60`, else `LOW`). `summary` is required; everything
+secret). `rank` is **ignored if present** — the server always derives it from
+`confidence` (`HIGH ≥ 0.85`, `MEDIUM ≥ 0.60`, else `LOW`), so an overconfident
+model cannot mint the label phase 2 gates on. `summary` is required; everything
 else is validated and malformed payloads are refused with 400.
 
 ## Failure behaviour
@@ -82,11 +83,14 @@ else is validated and malformed payloads are refused with 400.
 | Bridge disabled (default) | Endpoint 404, nothing is sent |
 | Hermes unreachable / 5xx | Warning logged; notification stands alone |
 | Verdict after `deadline_s` | Recorded as `late`; no reply |
-| Verdict never arrives | Recorded as `timeout` when the pending entry expires |
+| Verdict never arrives | Recorded as `timeout` at `deadline_s` + ~2s, without waiting for another request |
 | Request already decided by a human | Recorded as `skipped_decided`; no reply |
 | Duplicate verdict | `{"status": "duplicate"}`, original row untouched |
+| Video re-requested after a decision | No second push (it would only be dropped as a duplicate) |
 | Bad signature / stale timestamp | 401, nothing recorded |
+| Body over 16 KiB | 413, nothing recorded |
 | Reply target deleted | Reply is retried unthreaded, then logged as failure |
+| Process restart between push and verdict | Verdict recorded as `unknown_request`; no reply (the pending map is in-memory) |
 
 ## Storage and measurement
 
@@ -98,8 +102,9 @@ is the data that decides whether phase 2 (auto-apply) is ever enabled.
 
 ## Security notes
 
-- `/internal/` is exempt from the PIN middleware *because* the callback
-  authenticates with HMAC. Do not add unauthenticated endpoints under it.
+- `/internal/triage/` is exempt from the PIN middleware *because* the callback
+  authenticates with HMAC. Keep the exemption narrow: any new unauthenticated
+  endpoint needs its own authentication, not a wider prefix.
 - Both secrets are per-installation; rotate by updating both sides together.
 - A verdict is data, not authority: in phase 1 nothing in the reply path can
   change a video's status. Phase 2 must keep the deterministic rules

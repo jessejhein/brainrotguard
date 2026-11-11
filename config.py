@@ -98,8 +98,8 @@ class TriageConfig:
     enabled: bool = False
     mode: str = "shadow"          # "shadow" only for now; "auto" is not implemented yet
     url: str = ""                 # Hermes webhook route, e.g. http://host:8644/p/brgtriage/webhooks/brg-request
-    secret: str = ""              # HMAC secret for our outbound POST
-    callback_secret: str = ""     # HMAC secret Hermes uses on the verdict callback
+    secret: str = field(default="", repr=False)          # HMAC secret for our outbound POST
+    callback_secret: str = field(default="", repr=False)  # HMAC secret Hermes uses on the verdict callback
     deadline_s: int = 60          # skip the threaded reply after this many seconds
     reply_enabled: bool = True    # post the triage summary as a threaded reply
 

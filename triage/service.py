@@ -19,11 +19,13 @@ from .signing import sign
 logger = logging.getLogger(__name__)
 
 VERDICTS = ("allow", "uncertain", "deny")
-RANKS = ("HIGH", "MEDIUM", "LOW")
 MAX_SUMMARY = 1000
 MAX_REASON = 300
 MAX_REPLY = 3000
+# How long a pending request is remembered past its deadline, so a verdict that
+# arrives a moment late is still classified "late" rather than "unknown".
 PENDING_TTL_S = 900
+TIMEOUT_GRACE_S = 2.0
 POST_TIMEOUT_S = 10
 
 HIGH_MIN = 0.85
@@ -68,9 +70,10 @@ def normalise_verdict(payload: object) -> dict:
     if not 0.0 <= confidence <= 1.0:
         raise VerdictError("confidence must be between 0 and 1")
 
-    rank = str(payload.get("rank", "")).strip().upper()
-    if rank not in RANKS:
-        rank = rank_for(confidence)
+    # The rank is always derived from the number: a self-reported HIGH at 0.2
+    # would let the agent mint the label stage 2 gates on. The payload's rank is
+    # advisory only and is ignored.
+    rank = rank_for(confidence)
 
     category = payload.get("category")
     category = str(category).strip().lower() if category else None
@@ -109,13 +112,14 @@ def render_reply(verdict: dict) -> str:
 
 
 class _Pending:
-    __slots__ = ("chat_id", "message_id", "deadline", "started")
+    __slots__ = ("chat_id", "message_id", "deadline", "started", "timer")
 
     def __init__(self, chat_id, message_id, deadline, started):
         self.chat_id = chat_id
         self.message_id = message_id
         self.deadline = deadline
         self.started = started
+        self.timer: asyncio.Task | None = None
 
 
 class TriageService:
@@ -129,6 +133,9 @@ class TriageService:
         self._poster = poster
         self._pending: dict[str, _Pending] = {}
         self._tasks: set[asyncio.Task] = set()
+        # Deadline timers live apart from `_tasks` (the in-flight pushes) so a
+        # caller draining `_tasks` is never blocked by a pending deadline.
+        self._timers: set[asyncio.Task] = set()
 
     @property
     def enabled(self) -> bool:
@@ -145,19 +152,27 @@ class TriageService:
             return
         try:
             request_id = f"{profile_id}:{video['video_id']}"
-            if ref is not None:
-                now = time.monotonic()
-                self._pending[request_id] = _Pending(
-                    getattr(ref, "chat_id", None),
-                    getattr(ref, "message_id", None),
-                    now + max(1, int(self.config.deadline_s or 60)),
-                    now,
-                )
-            self._expire()
+            if self.store.get(request_id):
+                # Already triaged (the parent re-requested an existing video, or
+                # tapped Resend). A second verdict would be dropped as a duplicate,
+                # so don't spend an agent run on it.
+                logger.info("Triage skipped for %s: already has a decision", request_id)
+                return
             context = build_request_context(self.video_store, video, profile_id)
         except Exception as exc:  # context building must never break a request
             logger.error("Triage context build failed for %s: %s", profile_id, exc)
             return
+
+        if ref is not None:
+            now = time.monotonic()
+            pending = _Pending(
+                getattr(ref, "chat_id", None),
+                getattr(ref, "message_id", None),
+                now + max(1, int(self.config.deadline_s or 60)),
+                now,
+            )
+            self._pending[request_id] = pending
+            self._schedule_timeout(request_id, pending)
 
         task = asyncio.create_task(self._post(context))
         self._tasks.add(task)
@@ -200,6 +215,8 @@ class TriageService:
 
         profile_id, _, video_id = request_id.partition(":")
         pending = self._pending.pop(request_id, None)
+        if pending is not None and pending.timer is not None:
+            pending.timer.cancel()
         now = time.monotonic()
         latency_ms = int((now - pending.started) * 1000) if pending else None
 
@@ -241,18 +258,33 @@ class TriageService:
             logger.warning("Triage reply failed: %s", exc)
             return False
 
-    def _expire(self) -> None:
-        """Drop requests whose verdict never arrived and log the timeout."""
-        cutoff = time.monotonic() - PENDING_TTL_S
-        for request_id, pending in list(self._pending.items()):
-            if pending.started >= cutoff:
-                continue
-            self._pending.pop(request_id, None)
-            profile_id, _, video_id = request_id.partition(":")
-            try:
-                self.store.record(
-                    request_id=request_id, profile_id=profile_id, video_id=video_id,
-                    verdict="none", mode=self.mode, outcome="timeout",
-                )
-            except Exception as exc:
-                logger.debug("Triage timeout record failed for %s: %s", request_id, exc)
+    def _schedule_timeout(self, request_id: str, pending: "_Pending") -> None:
+        """Record a timeout at the deadline, without waiting for another request."""
+        timer = asyncio.create_task(self._expire_after(request_id, pending))
+        pending.timer = timer
+        self._timers.add(timer)
+        timer.add_done_callback(self._timers.discard)
+
+    async def _expire_after(self, request_id: str, pending: "_Pending") -> None:
+        """Sleep until this request's deadline, then record the timeout.
+
+        Identity check, not equality on ``request_id``: a newer notification for
+        the same video replaces the map entry and owns its own timer.
+        """
+        delay = max(0.0, pending.deadline - time.monotonic()) + TIMEOUT_GRACE_S
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            raise
+        if self._pending.get(request_id) is not pending:
+            return
+        self._pending.pop(request_id, None)
+        profile_id, _, video_id = request_id.partition(":")
+        try:
+            self.store.record(
+                request_id=request_id, profile_id=profile_id, video_id=video_id,
+                verdict="none", mode=self.mode, outcome="timeout",
+            )
+            logger.info("Triage timeout recorded for %s", request_id)
+        except Exception as exc:
+            logger.debug("Triage timeout record failed for %s: %s", request_id, exc)

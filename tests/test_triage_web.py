@@ -137,3 +137,31 @@ def test_internal_path_bypasses_pin_auth(video_store, tmp_path):
     client = TestClient(app, follow_redirects=False)
     resp = client.post(URL, content=b"{}", headers={})
     assert resp.status_code == 401  # reached the router, which rejected the signature
+
+
+def test_pin_auth_enforced_except_on_the_triage_path(video_store, tmp_path):
+    """The exemption is the triage path only — not the whole /internal/ prefix."""
+    from starlette.middleware.sessions import SessionMiddleware
+
+    video_store.create_profile("kid", "Kid", pin="1234")
+    video_store.create_profile("kid2", "Kid 2", pin="5678")
+    app = FastAPI()
+    app.include_router(router)
+    app.state.video_store = video_store
+    app.state.triage = _service(video_store, tmp_path)
+    # Same stack as main.py: PIN middleware inside, session middleware outside.
+    app.add_middleware(PinAuthMiddleware, pin="4321")
+    app.add_middleware(SessionMiddleware, secret_key="test", same_site="strict")
+    client = TestClient(app, follow_redirects=False)
+
+    assert client.post(URL, content=b"{}", headers={}).status_code == 401
+    other = client.post("/internal/other", content=b"{}", headers={})
+    assert 300 <= other.status_code < 400  # redirected to /login, middleware still applies
+
+
+def test_oversized_body_is_rejected(video_store, tmp_path):
+    client = _client(_service(video_store, tmp_path))
+    resp = client.post(URL, content=b"x" * (20 * 1024),
+                       headers={"Content-Type": "application/json"})
+    assert resp.status_code == 413
+    assert resp.json()["error"] == "payload too large"
