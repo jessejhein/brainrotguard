@@ -32,7 +32,7 @@ database:
 # triage:
 #   enabled: false
 #   mode: shadow
-#   url: http://hookhand.lan:8644/p/brgtriage/webhooks/brg-request
+#   url: http://dug.lan:8644/p/brgtriage/webhooks/brg-request
 #   secret: ${BRG_TRIAGE_SECRET}
 #   callback_secret: ${BRG_TRIAGE_CALLBACK_SECRET}
 #   deadline_s: 60

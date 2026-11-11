@@ -29,7 +29,7 @@ YAML (`config.yaml`):
 triage:
   enabled: true
   mode: shadow                # only "shadow" is implemented
-  url: http://hookhand.lan:8644/p/brgtriage/webhooks/brg-request
+  url: http://dug.lan:8644/p/brgtriage/webhooks/brg-request
   secret: ${BRG_TRIAGE_SECRET}
   callback_secret: ${BRG_TRIAGE_CALLBACK_SECRET}
   deadline_s: 60
@@ -45,13 +45,13 @@ is missing, and logs a warning if `mode` is anything other than `shadow`.
 
 ### Addresses
 
-Use the LAN names — `hookhand.lan` for the Hermes host and `dug.lan` for this
+Use the LAN names — `dug.lan` for the Hermes host and `dug.lan` for this
 container — not the bare hostnames. They resolve through the router's DNS from
 both machines; a bare `hookhand` only resolves where it happens to be in
 `/etc/hosts`. Confirm from inside the container before enabling:
 
 ```bash
-docker exec brainrotguard getent hosts hookhand.lan
+docker exec brainrotguard getent hosts dug.lan
 ```
 
 ## Wire contract
