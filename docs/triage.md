@@ -45,13 +45,14 @@ is missing, and logs a warning if `mode` is anything other than `shadow`.
 
 ### Addresses
 
-Use the LAN names — `dug.lan` for the Hermes host and `dug.lan` for this
-container — not the bare hostnames. They resolve through the router's DNS from
-both machines; a bare `hookhand` only resolves where it happens to be in
-`/etc/hosts`. Confirm from inside the container before enabling:
+The reviewer runs on this same host (Hermes profile `brgtriage`), but address it
+by `dug.lan`, never `localhost` or `127.0.0.1`: inside the container, loopback is
+the container, so a loopback URL reaches nothing. `dug.lan` resolves through the
+router's DNS to the host address the webhook listener is bound to. Confirm from
+inside the container before enabling:
 
 ```bash
-docker exec brainrotguard getent hosts dug.lan
+podman exec brainrotguard getent hosts dug.lan
 ```
 
 ## Wire contract
