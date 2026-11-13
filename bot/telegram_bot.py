@@ -543,9 +543,13 @@ class BrainRotGuardBot(SetupMixin, ApprovalMixin, ChannelMixin, TimeLimitMixin, 
             return
 
         # Fallthrough: video action callbacks (approve/deny/revoke/allowchan/blockchan/setcat)
-        # Format: action:profile_id:video_id (3 parts) or legacy action:video_id (2 parts)
+        # Format: action:profile_id:video_id (3 parts) or legacy action:video_id (2 parts).
+        # An automatic denial is overridden with undeny:profile:video:edu|fun.
+        if len(parts) == 4 and parts[0] == "undeny" and parts[3] in ("edu", "fun"):
+            await self._cb_video_action(query, "undeny", parts[1], parts[2], category=parts[3])
+            return
         _VIDEO_ACTIONS = {
-            "approve", "approve_edu", "approve_fun", "deny", "revoke",
+            "approve", "approve_edu", "approve_fun", "deny", "revoke", "undeny",
             "allowchan", "allowchan_edu", "allowchan_fun", "blockchan",
             "setcat_edu", "setcat_fun",
         }

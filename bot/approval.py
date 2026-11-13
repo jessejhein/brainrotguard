@@ -25,7 +25,89 @@ class NotifyRef:
 class ApprovalMixin:
     """Approval-related methods extracted from BrainRotGuardBot."""
 
-    async def notify_new_request(self, video: dict, profile_id: str = "default") -> "NotifyRef | None":
+    def _receipt_prefix(self, receipt: dict | None) -> str:
+        """Header plus summary for an automatic decision. Empty when there is none."""
+        if not receipt:
+            return ""
+        applied = receipt.get("applied")
+        if applied == "auto_approved":
+            header = self.tr("AUTO-APPROVED")
+        elif applied == "auto_denied":
+            header = self.tr("AUTO-DENIED")
+        else:
+            return ""
+        summary = (receipt.get("summary") or "").strip()
+        if summary:
+            return f"{header}\n{summary}\n\n"
+        return f"{header}\n\n"
+
+    def _request_buttons(self, pid: str, video_id: str, video: dict, receipt: dict | None = None):
+        """Inline buttons for a request, or the override keyboard after an auto decision."""
+        yt_link = (
+            f"https://www.youtube.com/shorts/{video_id}" if video.get("is_short")
+            else f"https://www.youtube.com/watch?v={video_id}"
+        )
+        buttons = [
+            [InlineKeyboardButton(f"▶️ {self.tr('Watch on YouTube')}", url=yt_link)],
+        ]
+        if receipt and receipt.get("applied") == "auto_approved":
+            buttons.append([
+                InlineKeyboardButton(
+                    f"↩️ {self.tr('Revoke')}", callback_data=f"revoke:{pid}:{video_id}"),
+            ])
+            return buttons
+        if receipt and receipt.get("applied") == "auto_denied":
+            buttons.append([
+                InlineKeyboardButton(
+                    f"📚 {self.tr('Approve Edu')}", callback_data=f"undeny:{pid}:{video_id}:edu"),
+                InlineKeyboardButton(
+                    f"🎮 {self.tr('Approve Fun')}", callback_data=f"undeny:{pid}:{video_id}:fun"),
+            ])
+            return buttons
+        profiles = self._get_profiles()
+        other = self.video_store.find_video_approved_for_others(video_id, pid)
+        if other and len(profiles) > 1:
+            buttons.append([
+                InlineKeyboardButton(f"⚡ {self.tr('Auto-approve')}", callback_data=f"autoapprove:{pid}:{video_id}"),
+            ])
+        buttons.extend([
+            [
+                InlineKeyboardButton(f"📚 {self.tr('Approve Edu')}", callback_data=f"approve_edu:{pid}:{video_id}"),
+                InlineKeyboardButton(f"🎮 {self.tr('Approve Fun')}", callback_data=f"approve_fun:{pid}:{video_id}"),
+            ],
+            [
+                InlineKeyboardButton(f"🚫 {self.tr('Deny')}", callback_data=f"deny:{pid}:{video_id}"),
+            ],
+            [
+                InlineKeyboardButton(f"📚 {self.tr('Allow Ch Edu')}", callback_data=f"allowchan_edu:{pid}:{video_id}"),
+                InlineKeyboardButton(f"🎮 {self.tr('Allow Ch Fun')}", callback_data=f"allowchan_fun:{pid}:{video_id}"),
+            ],
+            [
+                InlineKeyboardButton(f"🔒 {self.tr('Block Channel')}", callback_data=f"blockchan:{pid}:{video_id}"),
+            ],
+        ])
+        return buttons
+
+    def _stamp_override(self, profile_id: str, video_id: str) -> None:
+        """Record that a parent overrode an automatic triage decision."""
+        store = getattr(self, "triage_store", None)
+        if store is None:
+            return
+        try:
+            row = store.for_video(profile_id, video_id)
+        except Exception as exc:
+            logger.warning("Triage override lookup failed: %s", exc)
+            return
+        if not row or row.get("applied") not in ("auto_approved", "auto_denied"):
+            return
+        if row.get("overridden_at"):
+            return
+        try:
+            store.set_overridden_at(row["request_id"])
+        except Exception as exc:
+            logger.warning("Triage override stamp failed: %s", exc)
+
+    async def notify_new_request(self, video: dict, profile_id: str = "default", receipt: dict | None = None) -> "NotifyRef | None":
         """Send parent a notification about a new video request with Approve/Deny buttons."""
         if not self._app:
             logger.warning("Bot not started, cannot send notification")
@@ -63,15 +145,16 @@ class ApprovalMixin:
             short_label=short_label,
             from_label=from_label,
         )
+        prefix = self._receipt_prefix(receipt)
         caption = _md(
-            f"**{request_label}**\n\n"
+            f"{prefix}**{request_label}**\n\n"
             f"**{self.tr('Title:')}** {title}\n"
             f"**{self.tr('Channel:')}** {channel_link}\n"
             f"**{self.tr('Duration:')}** {duration}\n"
             f"[{self.tr('Watch on YouTube')}]({yt_link}){cross_child_note}"
         )
         plain_text = (
-            f"{request_label}\n\n"
+            f"{prefix}{request_label}\n\n"
             f"{self.tr('Title:')} {title}\n"
             f"{self.tr('Channel:')} {video['channel_name']}\n"
             f"{self.tr('Duration:')} {duration}\n"
@@ -83,30 +166,7 @@ class ApprovalMixin:
         # Use profile_id in callback data — short enough to fit 64-byte limit
         # Format: action:profile_id:video_id (profile_id max ~20 chars)
         pid = profile_id
-        buttons = [
-            [InlineKeyboardButton(f"▶️ {self.tr('Watch on YouTube')}", url=yt_link)],
-        ]
-        # If cross-child approved, show auto-approve button
-        if other and len(profiles) > 1:
-            buttons.append([
-                InlineKeyboardButton(f"⚡ {self.tr('Auto-approve')}", callback_data=f"autoapprove:{pid}:{video_id}"),
-            ])
-        buttons.extend([
-            [
-                InlineKeyboardButton(f"📚 {self.tr('Approve Edu')}", callback_data=f"approve_edu:{pid}:{video_id}"),
-                InlineKeyboardButton(f"🎮 {self.tr('Approve Fun')}", callback_data=f"approve_fun:{pid}:{video_id}"),
-            ],
-            [
-                InlineKeyboardButton(f"🚫 {self.tr('Deny')}", callback_data=f"deny:{pid}:{video_id}"),
-            ],
-            [
-                InlineKeyboardButton(f"📚 {self.tr('Allow Ch Edu')}", callback_data=f"allowchan_edu:{pid}:{video_id}"),
-                InlineKeyboardButton(f"🎮 {self.tr('Allow Ch Fun')}", callback_data=f"allowchan_fun:{pid}:{video_id}"),
-            ],
-            [
-                InlineKeyboardButton(f"🔒 {self.tr('Block Channel')}", callback_data=f"blockchan:{pid}:{video_id}"),
-            ],
-        ])
+        buttons = self._request_buttons(pid, video_id, video, receipt)
         keyboard = InlineKeyboardMarkup(buttons)
 
         try:
@@ -275,7 +335,7 @@ class ApprovalMixin:
         else:
             await query.answer(self.tr("Failed to delete profile."))
 
-    async def _cb_video_action(self, query, action: str, profile_id: str, video_id: str) -> None:
+    async def _cb_video_action(self, query, action: str, profile_id: str, video_id: str, category: str | None = None) -> None:
         """Handle approve/deny/revoke/allowchan/blockchan/setcat actions on a video."""
         if not re.fullmatch(r'[a-zA-Z0-9_-]{11}', video_id):
             await query.answer(self.tr("Invalid callback."))
@@ -326,9 +386,18 @@ class ApprovalMixin:
             _answer_bg(query, self.tr("Denied."))
             status_label = self.tr("DENIED")
         elif action == "revoke" and video['status'] == 'approved':
+            # Revoke means the approval is withdrawn: the video becomes denied.
             cs.update_status(video_id, "denied")
+            self._stamp_override(profile_id, video_id)
             _answer_bg(query, self.tr("Revoked!"))
             status_label = self.tr("REVOKED")
+        elif action == "undeny" and video['status'] == 'denied' and category in ("edu", "fun"):
+            cs.update_status(video_id, "approved")
+            cs.set_video_category(video_id, category)
+            self._stamp_override(profile_id, video_id)
+            cat_label = self.cat_label(category)
+            _answer_bg(query, f"{self.tr('Approved!')} ({cat_label})")
+            status_label = f"{self.tr('APPROVED')} ({cat_label})"
         elif action == "allowchan":
             channel = video['channel_name']
             cid = video.get('channel_id')

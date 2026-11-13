@@ -4,6 +4,7 @@ TRANSLATIONS: dict[str, str] = {
     "Active": "Activity",
     "App Name": "BrainRotGuard",
     "Approved by Request": "Approved by Request",
+    "AUTO-DENIED": "AUTO-DENIED",
     "Approved videos outside allowed channels will stay here": "Approved videos outside allowed channels will stay here",
     "Dismiss": "Dismiss",
     "Hide": "Hide",

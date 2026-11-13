@@ -9,6 +9,7 @@ verdict degrades to "no reply" — never to an approval.
 import asyncio
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 
@@ -98,11 +99,19 @@ def normalise_verdict(payload: object) -> dict:
     }
 
 
-def render_reply(verdict: dict) -> str:
+def render_reply(verdict: dict, *, applied: str = "", mode: str = "shadow") -> str:
     """Render the parent-facing reply: what it is, what we suggest, why."""
     label = {"allow": "ALLOW", "uncertain": "UNCERTAIN", "deny": "DENY"}[verdict["verdict"]]
+    if applied == "auto_approved":
+        head = "\U0001F9E0 Triage (auto-approved)"
+    elif applied == "auto_denied":
+        head = "\U0001F9E0 Triage (auto-denied)"
+    elif mode == "auto":
+        head = "\U0001F9E0 Triage (auto \u2014 no action)"
+    else:
+        head = "\U0001F9E0 Triage (shadow \u2014 no action)"
     lines = [
-        "\U0001F9E0 Triage (shadow \u2014 no action)",
+        head,
         f"What it is: {verdict['summary']}",
         f"Recommendation: {label} \u00b7 confidence {verdict['rank']} ({verdict['confidence']:.2f})",
     ]
@@ -281,13 +290,19 @@ class TriageService:
         now = time.monotonic()
         latency_ms = int((now - pending.started) * 1000) if pending else None
 
+        applied = ""
         if pending is not None and pending.holding and not pending.released:
             row = self.video_store.get_video(video_id, profile_id)
             if not row or row.get("status") != "pending":
                 outcome = "skipped_decided"
                 await self._release(request_id, verdict=None)
             else:
-                await self._release(request_id, verdict)
+                applied = self._auto_decision(verdict, row, profile_id, video_id)
+                receipt = None
+                if applied:
+                    receipt = {"applied": applied, "summary": verdict["summary"],
+                               "category": verdict.get("category")}
+                await self._release(request_id, verdict, receipt=receipt, applied=applied)
                 outcome = "hold_released"
         elif pending is None:
             outcome = "unknown_request"
@@ -300,17 +315,21 @@ class TriageService:
             row = self.video_store.get_video(video_id, profile_id)
             if not row or row.get("status") != "pending":
                 outcome = "skipped_decided"
-            elif not self.config.reply_enabled or pending.message_id is None or self.bot is None:
-                outcome = "logged"
             else:
-                sent = await self._send_reply(pending, render_reply(verdict))
-                outcome = "replied" if sent else "logged"
+                applied = self._auto_decision(verdict, row, profile_id, video_id)
+                if not self.config.reply_enabled or pending.message_id is None or self.bot is None:
+                    outcome = "logged"
+                else:
+                    sent = await self._send_reply(
+                        pending, render_reply(verdict, applied=applied, mode=self.mode))
+                    outcome = "replied" if sent else "logged"
 
         recorded = self.store.record(
             request_id=request_id, profile_id=profile_id, video_id=video_id,
             verdict=verdict["verdict"], confidence=verdict["confidence"], rank=verdict["rank"],
             category=verdict["category"], summary=verdict["summary"], reason=verdict["reason"],
             mode=self.mode, outcome=outcome, latency_ms=latency_ms, raw=verdict,
+            applied=applied,
         )
         if not recorded:
             return {"status": "duplicate", "request_id": request_id}
@@ -341,7 +360,54 @@ class TriageService:
             logger.error("Triage notification failed: %s", exc)
             return None
 
-    async def _release(self, request_id: str, verdict: dict | None = None, receipt=None):
+    def _word_hits(self, title: str) -> list[str]:
+        try:
+            filters = self.video_store.get_word_filters_set()
+        except Exception:
+            return []
+        return sorted(
+            word for word in filters
+            if word and re.search(r"\b" + re.escape(word) + r"\b", title or "", re.IGNORECASE)
+        )
+
+    def _auto_decision(self, verdict: dict, row: dict, profile_id: str, video_id: str) -> str:
+        """Return ``auto_approved`` / ``auto_denied`` or ``''``. Never raises."""
+        try:
+            if self.mode != "auto":
+                return ""
+            kind = verdict.get("verdict")
+            if kind not in ("allow", "deny") or verdict.get("rank") != "HIGH":
+                return ""
+            minimum = float(getattr(self.config, "auto_min_confidence", 0.85) or 0.85)
+            if float(verdict.get("confidence") or 0) < minimum:
+                return ""
+            if row.get("status") != "pending":
+                return ""
+            if self._word_hits(row.get("title") or ""):
+                return ""
+            # One verdict has one direction. Deny is preferred when both switches
+            # are on and the verdict itself is deny.
+            if kind == "deny":
+                if not getattr(self.config, "auto_deny", True):
+                    return ""
+                self.video_store.update_status(video_id, "denied", profile_id=profile_id)
+                return "auto_denied"
+            if not getattr(self.config, "auto_approve", True):
+                return ""
+            category = verdict.get("category")
+            if category not in ("edu", "fun"):
+                category = self.video_store.get_channel_category(
+                    row.get("channel_name") or "", profile_id=profile_id)
+            if category not in ("edu", "fun"):
+                category = "fun"
+            self.video_store.update_status(video_id, "approved", profile_id=profile_id)
+            self.video_store.set_video_category(video_id, category, profile_id=profile_id)
+            return "auto_approved"
+        except Exception as exc:
+            logger.error("Triage auto-apply failed for %s: %s", video_id, exc)
+            return ""
+
+    async def _release(self, request_id: str, verdict: dict | None = None, receipt=None, applied: str = ""):
         """Send a held notification once, then the summary reply when we have one."""
         pending = self._pending.get(request_id)
         if pending is None or pending.released:
@@ -366,7 +432,7 @@ class TriageService:
                 pending.deadline,
                 pending.started,
             )
-            await self._send_reply(target, render_reply(verdict))
+            await self._send_reply(target, render_reply(verdict, applied=applied, mode=self.mode))
         return ref
 
     def _record_outcome_if_absent(self, request_id: str, outcome: str) -> None:

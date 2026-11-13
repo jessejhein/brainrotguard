@@ -84,6 +84,8 @@ class BrainRotGuard:
                 bot=self.bot,
             )
             logger.info("Triage bridge enabled (mode=%s)", self.triage.mode)
+            if self.bot is not None:
+                self.bot.triage_store = self.triage.store
             try:
                 await self.triage.restore_holds()
             except Exception as exc:

@@ -177,6 +177,7 @@ TRANSLATIONS: dict[str, str] = {
     "Revoked!": "Fjernet!",
     "Blocked: {channel}": "Blokkert: {channel}",
     "AUTO-APPROVED ({category})": "AUTOGODKJENT ({category})",
+    "AUTO-DENIED": "AUTONEKTET",
     "APPROVED": "GODKJENT",
     "DENIED": "AVSLÅTT",
     "REVOKED": "FJERNET",
