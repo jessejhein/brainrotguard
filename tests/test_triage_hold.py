@@ -227,3 +227,35 @@ def test_restart_flush_does_not_duplicate(video_store, tmp_path):
     assert [event[0] for event in bot2.events] == ["notify"]
     assert store.list_holds() == []
     assert store.get("default:abc123")["outcome"] == "hold_timeout"
+
+
+def test_push_failed_row_is_retried_on_the_next_request(video_store, tmp_path):
+    """A failed push is not a verdict, so a later request must triage again."""
+    state = {"fail": True}
+    posted = []
+
+    async def poster(context, body):
+        posted.append(context["request_id"])
+        if state["fail"]:
+            raise RuntimeError("connection refused")
+        return True
+
+    bot = _HoldBot()
+    svc, store = _hold_service(video_store, tmp_path, poster=poster, bot=bot)
+    video = video_store.add_video("abc123", "Title", "Chan", profile_id="default")
+
+    async def go():
+        await svc.on_request(video, "default", None)
+        await asyncio.gather(*list(svc._tasks))
+        assert store.get("default:abc123")["outcome"] == "push_failed"
+        state["fail"] = False
+        await svc.on_request(video, "default", None)
+        await asyncio.gather(*list(svc._tasks))
+        return await svc.handle_verdict("default:abc123", _verdict())
+
+    result = asyncio.run(go())
+    assert posted == ["default:abc123", "default:abc123"]
+    assert result["outcome"] == "hold_released"
+    row = store.get("default:abc123")
+    assert row["verdict"] == "allow"
+    assert row["outcome"] == "hold_released"

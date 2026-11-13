@@ -182,7 +182,8 @@ class TriageService:
         request_id = ""
         try:
             request_id = f"{profile_id}:{video['video_id']}"
-            if self.store.get(request_id):
+            existing = self.store.get(request_id)
+            if existing and existing.get("verdict") in VERDICTS:
                 # Already triaged (the parent re-requested an existing video, or
                 # tapped Resend). A second verdict would be dropped as a duplicate,
                 # so don't spend an agent run on it.
@@ -190,6 +191,11 @@ class TriageService:
                 if holding:
                     await self._notify_now(video, profile_id)
                 return
+            if existing:
+                # push_failed (and any other row with no verdict) must not block
+                # a later request from reaching the agent.
+                logger.info("Triage retrying %s after outcome=%s", request_id, existing.get("outcome"))
+                self.store.delete(request_id)
             context = build_request_context(self.video_store, video, profile_id)
         except Exception as exc:  # context building must never break a request
             logger.error("Triage context build failed for %s: %s", profile_id, exc)

@@ -130,6 +130,14 @@ class TriageStore:
             self.conn.commit()
             return cursor.rowcount > 0
 
+    def delete(self, request_id: str) -> None:
+        """Remove one decision so a failed push can be triaged again."""
+        with self._lock:
+            self.conn.execute(
+                "DELETE FROM triage_decisions WHERE request_id = ?", (request_id,)
+            )
+            self.conn.commit()
+
     def get(self, request_id: str) -> dict | None:
         with self._lock:
             row = self.conn.execute(
