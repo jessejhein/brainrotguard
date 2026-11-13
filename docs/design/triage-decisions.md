@@ -1,8 +1,28 @@
 # BrainRotGuard → Hermes triage: decision record
 
-Status: phase 1 (describe-only) is implemented; phase 2 (auto-apply) is designed
-in §7 and deliberately not built. Decisions below are Jesse's, 2026-11-07. §9
-lists what is still open.
+Status: hold-and-bundle, auto-apply and child visibility are implemented on
+`feature/triage-hold-auto`. Decisions below are Jesse's, 2026-11-07, plus the
+three follow-ups from 2026-11-11. §9 lists what is still open.
+
+## Follow-ups (2026-11-11)
+
+- **Bundle the notification with the verdict.** When `hold_notification` is
+  on, the parent message waits for the verdict or for `hold_timeout_s`
+  (default 240). Push failure, a hold that cannot be registered, and triage
+  being disabled all send the notification immediately. `triage_holds` survives
+  a restart. `hold_notification: false` is the previous send-then-reply path.
+- **Auto-apply is opt-in via `mode: auto`.** It requires a HIGH allow or deny
+  at `auto_min_confidence`, a still-pending row, and no word-filter hits.
+  Deny is the direction taken when the verdict is deny. The receipt keyboard
+  is the override: revoke turns an automatic approval into `denied` (not back
+  to pending), and `undeny` approves a denial with `edu` or `fun`.
+  `overridden_at` records that tap. `mode: shadow` remains a one-line rollback
+  and writes no status.
+- **The child sees a neutral summary only.** Waiting page and `/requests`
+  show "Reviewed: looks fine" or "Reviewed: a parent is deciding" plus the
+  summary. Reason, confidence, rank and other children's rows are not rendered.
+  `timeout`, `hold_timeout` and `late` show no summary. Denied requests appear
+  as "Not approved".
 
 ## 0. Decisions (Jesse, 2026-11-07)
 

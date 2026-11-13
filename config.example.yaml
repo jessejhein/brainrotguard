@@ -26,9 +26,10 @@ youtube:
 database:
   path: db/videos.db
 
-# Optional triage bridge: pushes each request's context to a Hermes webhook route
-# and renders the verdict as a threaded reply. Describe-only in this phase — it
-# never approves or denies. See docs/triage.md.
+# Optional triage bridge. See docs/triage.md.
+# mode shadow describes only. mode auto applies a confident verdict.
+# hold_notification waits for the verdict (or hold_timeout_s) before the
+# parent notification is sent.
 # triage:
 #   enabled: false
 #   mode: shadow
@@ -37,6 +38,11 @@ database:
 #   callback_secret: ${BRG_TRIAGE_CALLBACK_SECRET}
 #   deadline_s: 60
 #   reply_enabled: true
+#   hold_notification: true
+#   hold_timeout_s: 240
+#   auto_min_confidence: 0.85
+#   auto_approve: true
+#   auto_deny: true
 
 watch_limits:
   daily_limit_minutes: 120  # 0 = unlimited

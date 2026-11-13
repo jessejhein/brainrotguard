@@ -1,4 +1,11 @@
 # Changelog
+## Unreleased
+
+**Added**
+- Triage can hold the parent notification until the verdict or a 4-minute timeout, then send the notification and the summary together. A failed push sends the notification immediately.
+- `triage.mode: auto` applies a high-confidence allow or deny. The Telegram message is a receipt with Revoke, or with an undeny choice of edu/fun. `mode: shadow` still changes nothing.
+- The child waiting page and `/requests` show a neutral review line and the summary for their own request. Denied requests are listed as "Not approved".
+
 ## v1.31.1 - 2026-04-09
 
 **Fixed**

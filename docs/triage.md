@@ -1,21 +1,30 @@
 # Triage bridge (optional)
 
-Sends each new video request to an external triage agent (Hermes by default) and
-renders its verdict as a threaded reply under the request notification.
+Sends each new video request to an external triage agent (Hermes by default).
+With `hold_notification` (the default) the parent notification waits until the
+verdict arrives or `hold_timeout_s` (default 240s) expires, then the
+notification and the summary reply go out together. `mode: shadow` never
+changes a video's status. `mode: auto` applies a confident allow or deny and
+keeps a one-tap override on the same message.
 
-**Phase 1 is describe-only.** The bridge never approves, denies, or otherwise
-changes a video's status. The approval buttons keep working exactly as they do
-without it, and the notification itself is unchanged.
+`mode: shadow` is the one-line rollback: set it and restart. No deploy is
+required, and a held notification still goes out.
 
 ## Flow
 
 ```
 kid requests a video
   -> BRG commits the pending row
-  -> notification sent now, unchanged (buttons live)      [message_id kept]
-  -> background POST of the request context (HMAC)         -> Hermes webhook route
-  <- POST /internal/triage/{request_id} with a verdict     <- triage agent
-  -> reply threaded under the notification (shadow wording, no action)
+  -> if triage is off, or hold_notification is false:
+       notification sent now (buttons live)               [message_id kept]
+       background POST of the request context (HMAC)
+       later reply threaded under that notification
+  -> if hold_notification is true:
+       notification is NOT sent yet; a triage_holds row is written
+       background POST of the request context (HMAC)
+       on verdict: send notification, then the summary reply
+       on hold_timeout_s: send the notification alone
+       on push failure: send the notification immediately
 ```
 
 Requests are pushed, not polled: Telegram's Bot API does not deliver messages
@@ -28,20 +37,72 @@ YAML (`config.yaml`):
 ```yaml
 triage:
   enabled: true
-  mode: shadow                # only "shadow" is implemented
+  mode: shadow                # "shadow" (advice only) or "auto"
   url: http://dug.lan:8644/p/brgtriage/webhooks/brg-request
   secret: ${BRG_TRIAGE_SECRET}
   callback_secret: ${BRG_TRIAGE_CALLBACK_SECRET}
-  deadline_s: 60
+  deadline_s: 60              # reply-only path: skip the reply after this
   reply_enabled: true
+  hold_notification: true     # bundle notification + verdict
+  hold_timeout_s: 240
+  auto_min_confidence: 0.85
+  auto_approve: true
+  auto_deny: true
 ```
 
 Environment: `BRG_TRIAGE_ENABLED`, `BRG_TRIAGE_MODE`, `BRG_TRIAGE_URL`,
 `BRG_TRIAGE_SECRET`, `BRG_TRIAGE_CALLBACK_SECRET`, `BRG_TRIAGE_DEADLINE_S`,
-`BRG_TRIAGE_REPLY_ENABLED`.
+`BRG_TRIAGE_REPLY_ENABLED`, `BRG_TRIAGE_HOLD_NOTIFICATION`,
+`BRG_TRIAGE_HOLD_TIMEOUT_S`, `BRG_TRIAGE_AUTO_MIN_CONFIDENCE`,
+`BRG_TRIAGE_AUTO_APPROVE`, `BRG_TRIAGE_AUTO_DENY`.
 
 Startup refuses to enable the bridge when `url`, `secret` or `callback_secret`
-is missing, and logs a warning if `mode` is anything other than `shadow`.
+is missing. A mode other than `shadow` or `auto` is forced back to `shadow`.
+A warning is logged when `hold_timeout_s` is below `deadline_s`, because the
+verdict would not arrive before the hold releases.
+
+## Hold
+
+`triage_holds` stores the video payload for each in-flight notification. A
+restart releases rows older than `hold_timeout_s` at once and re-arms the
+rest, so a request is not swallowed and a row that was already released is
+not sent twice. The child's request path never waits on this and never sees
+an exception from it: any failure sends the notification immediately
+(`outcome = push_failed`).
+
+`hold_notification: false` is today's behaviour: send first, reply later.
+That path still records `timeout` at `deadline_s`. The hold path records
+`hold_released` or `hold_timeout` instead.
+
+## Auto-apply
+
+When `mode` is `auto`, a verdict is applied only if all of these hold:
+
+- verdict is `allow` or `deny` (never `uncertain`)
+- rank is `HIGH` and `confidence >= auto_min_confidence` (default 0.85)
+- the video is still `pending`
+- `word_filter_hits` is empty
+- the matching switch is on (`auto_approve` / `auto_deny`)
+
+A deny is applied when the verdict is deny. An allow uses the verdict
+category, then the channel category, then `fun`. The notification is a
+receipt: a header states the automatic decision, the summary follows, and
+the keyboard is the override. Revoke on an automatic approval sets the video
+to `denied` (revoke means "not approved", not "back to waiting"). An
+automatic denial offers `undeny:<profile>:<video>:edu` and `:fun`, which
+approve with that category. Either override stamps `overridden_at`.
+`applied` is `auto_approved`, `auto_denied`, or empty.
+
+`mode: shadow` writes no status.
+
+## What the child sees
+
+The waiting page and `/requests` may show a neutral line and the summary:
+"Reviewed: looks fine" for allow, "Reviewed: a parent is deciding" otherwise.
+They never show `reason`, confidence, rank, or the words "flagged" / "denied".
+Outcomes `timeout`, `hold_timeout` and `late` show no summary. `/requests`
+lists denied videos as "Not approved". A child only sees rows for their own
+profile.
 
 ### Addresses
 
@@ -103,24 +164,29 @@ else is validated and malformed payloads are refused with 400.
 | Situation | Result |
 |-----------|--------|
 | Bridge disabled (default) | Endpoint 404, nothing is sent |
-| Hermes unreachable / 5xx | Warning logged; notification stands alone |
-| Verdict after `deadline_s` | Recorded as `late`; no reply |
-| Verdict never arrives | Recorded as `timeout` at `deadline_s` + ~2s, without waiting for another request |
-| Request already decided by a human | Recorded as `skipped_decided`; no reply |
+| Hermes unreachable / 5xx | Hold path: notification sent immediately, `outcome = push_failed`. Reply-only path: warning logged; notification already stands alone |
+| Verdict after `deadline_s` (reply-only) | Recorded as `late`; no reply |
+| Verdict never arrives (reply-only) | Recorded as `timeout` at `deadline_s` + ~2s, without waiting for another request |
+| Verdict inside the hold window | One notification, then one reply; `outcome = hold_released` |
+| Hold expires with no verdict | One notification; `outcome = hold_timeout` |
+| Restart during a hold | Younger holds are re-armed; older ones are released once |
+| Request already decided by a human | Recorded as `skipped_decided`; no reply. A held notification is still sent |
 | Duplicate verdict | `{"status": "duplicate"}`, original row untouched |
 | Video re-requested after a decision | No second push (it would only be dropped as a duplicate) |
 | Bad signature / stale timestamp | 401, nothing recorded |
 | Body over 16 KiB | 413, nothing recorded |
 | Reply target deleted | Reply is retried unthreaded, then logged as failure |
-| Process restart between push and verdict | Verdict recorded as `unknown_request`; no reply (the pending map is in-memory) |
+| Process restart between push and verdict (reply-only, no hold row) | Verdict recorded as `unknown_request`; no reply (that pending map is in-memory) |
 
 ## Storage and measurement
 
 Every verdict lands in `triage_decisions` in the same SQLite file as the videos
 (`request_id` is the primary key). `outcome` distinguishes `replied`, `logged`,
-`skipped_decided`, `late`, `unknown_request` and `timeout`, and `latency_ms`
-records how long the verdict took. Joined against the video's final status this
-is the data that decides whether phase 2 (auto-apply) is ever enabled.
+`skipped_decided`, `late`, `unknown_request`, `timeout`, `hold_released`,
+`hold_timeout` and `push_failed`. `applied` is `auto_approved`, `auto_denied`
+or empty, and `overridden_at` is set when a parent reverses an automatic
+decision. `latency_ms` records how long the verdict took. `triage_holds` is
+only the in-flight notification window and is deleted on release.
 
 ## Security notes
 
@@ -128,10 +194,9 @@ is the data that decides whether phase 2 (auto-apply) is ever enabled.
   authenticates with HMAC. Keep the exemption narrow: any new unauthenticated
   endpoint needs its own authentication, not a wider prefix.
 - Both secrets are per-installation; rotate by updating both sides together.
-- A verdict is data, not authority: in phase 1 nothing in the reply path can
-  change a video's status. Phase 2 must keep the deterministic rules
-  (allowlist/blocklist/word filters) authoritative and add an override action
-  for every automatic decision.
+- In `shadow`, a verdict cannot change a video's status. In `auto`, only the
+  rules above can, and every automatic decision has an override button.
+  Allowlist, blocklist and word filters still run before triage is asked.
 
 ## Manual check
 
