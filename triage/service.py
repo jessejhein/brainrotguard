@@ -28,6 +28,8 @@ MAX_REPLY = 3000
 # arrives a moment late is still classified "late" rather than "unknown".
 PENDING_TTL_S = 900
 TIMEOUT_GRACE_S = 2.0
+# How long a sent notification is remembered so a late verdict can thread under it.
+RELEASED_TTL_S = 1800
 POST_TIMEOUT_S = 10
 
 HIGH_MIN = 0.85
@@ -140,6 +142,17 @@ class _Pending:
         self.holding = holding
 
 
+class _Released:
+    """Where an already-sent notification landed, so a late verdict can thread under it."""
+
+    __slots__ = ("chat_id", "message_id", "expires_at")
+
+    def __init__(self, chat_id, message_id, expires_at):
+        self.chat_id = chat_id
+        self.message_id = message_id
+        self.expires_at = expires_at
+
+
 class TriageService:
     """Owns the outbound push, the pending map and the reply rendering."""
 
@@ -150,6 +163,9 @@ class TriageService:
         self.bot = bot
         self._poster = poster
         self._pending: dict[str, _Pending] = {}
+        # Sent notifications, kept for a while so a verdict that arrives after the
+        # hold released can still be posted as a threaded reply.
+        self._released: dict[str, _Released] = {}
         self._tasks: set[asyncio.Task] = set()
         # Deadline timers live apart from `_tasks` (the in-flight pushes) so a
         # caller draining `_tasks` is never blocked by a pending deadline.
@@ -286,8 +302,14 @@ class TriageService:
         if verdict["request_id"] != request_id:
             raise VerdictError("request_id does not match the URL")
 
-        if self.store.get(request_id):
+        existing = self.store.get(request_id)
+        if existing and existing.get("verdict") in VERDICTS:
             return {"status": "duplicate", "request_id": request_id}
+        if existing:
+            # A row with no verdict (timeout, hold_timeout, push_failed) must not
+            # swallow a review that arrives later: clear it, record the real one.
+            logger.info("Triage late verdict for %s (was %s)", request_id, existing.get("outcome"))
+            self.store.delete(request_id)
 
         profile_id, _, video_id = request_id.partition(":")
         pending = self._pending.get(request_id)
@@ -302,6 +324,10 @@ class TriageService:
             if not row or row.get("status") != "pending":
                 outcome = "skipped_decided"
                 await self._release(request_id, verdict=None)
+                # The parent already decided: the notification still goes out, and
+                # the review follows under it so it is not silently lost.
+                if await self._reply_late(request_id, verdict, "already decided by a parent"):
+                    outcome = "decided_reply"
             else:
                 applied = self._auto_decision(verdict, row, profile_id, video_id)
                 receipt = None
@@ -311,11 +337,15 @@ class TriageService:
                 await self._release(request_id, verdict, receipt=receipt, applied=applied)
                 outcome = "hold_released"
         elif pending is None:
-            outcome = "unknown_request"
-            self._pending.pop(request_id, None)
+            outcome = "late_reply" if await self._reply_late(
+                request_id, verdict, "the request message had already gone out") else "unknown_request"
         elif now > pending.deadline:
-            outcome = "late"
             self._pending.pop(request_id, None)
+            if pending.message_id is not None and await self._reply_late(
+                    request_id, verdict, "the request message had already gone out"):
+                outcome = "late_reply"
+            else:
+                outcome = "late"
         else:
             self._pending.pop(request_id, None)
             row = self.video_store.get_video(video_id, profile_id)
@@ -427,6 +457,12 @@ class TriageService:
         except Exception as exc:
             logger.debug("Triage hold delete failed for %s: %s", request_id, exc)
         ref = await self._notify_now(pending.video, pending.profile_id or "", receipt=receipt)
+        if ref is not None:
+            self._released[request_id] = _Released(
+                getattr(ref, "chat_id", None), getattr(ref, "message_id", None),
+                time.monotonic() + RELEASED_TTL_S,
+            )
+            self._prune_released()
         if (
             verdict is not None
             and ref is not None
@@ -492,7 +528,24 @@ class TriageService:
             except Exception as exc:
                 logger.error("Triage hold restore failed for %s: %s", request_id, exc)
 
-    async def _send_reply(self, pending: _Pending, text: str) -> bool:
+    async def _reply_late(self, request_id: str, verdict: dict, note: str) -> bool:
+        """Post a verdict under a notification that already went out. False if none."""
+        released = self._released.pop(request_id, None)
+        if released is None or released.message_id is None:
+            return False
+        if time.monotonic() > released.expires_at:
+            return False
+        if not getattr(self.config, "reply_enabled", True) or self.bot is None:
+            return False
+        text = f"{render_reply(verdict, mode=self.mode)}\n({note})"
+        return await self._send_reply(released, text)
+
+    def _prune_released(self) -> None:
+        cutoff = time.monotonic()
+        for key in [k for k, v in self._released.items() if v.expires_at < cutoff]:
+            self._released.pop(key, None)
+
+    async def _send_reply(self, pending: "_Pending | _Released", text: str) -> bool:
         sender = getattr(self.bot, "send_triage_reply", None)
         if sender is None:
             return False

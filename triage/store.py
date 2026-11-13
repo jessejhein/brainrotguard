@@ -51,7 +51,7 @@ _DECISION_COLUMNS = (
 
 OUTCOMES = (
     "logged", "replied", "skipped_decided", "late", "unknown_request", "timeout",
-    "hold_released", "hold_timeout", "push_failed",
+    "hold_released", "hold_timeout", "push_failed", "late_reply", "decided_reply",
 )
 
 # Outcomes with no verdict worth showing the child. Timeouts and late replies

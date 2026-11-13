@@ -259,3 +259,57 @@ def test_push_failed_row_is_retried_on_the_next_request(video_store, tmp_path):
     row = store.get("default:abc123")
     assert row["verdict"] == "allow"
     assert row["outcome"] == "hold_released"
+
+
+def test_late_verdict_after_hold_timeout_threads_under_the_sent_message(
+        video_store, tmp_path, monkeypatch):
+    """The 4-minute release went out first; a later review must still be posted."""
+    monkeypatch.setattr("triage.service.TIMEOUT_GRACE_S", 0.0)
+
+    async def poster(context, body):
+        return True
+
+    bot = _HoldBot()
+    svc, store = _hold_service(video_store, tmp_path, poster=poster, bot=bot, hold_timeout_s=1)
+    video = video_store.add_video("abc123", "Minecraft build tutorial", "SomeCreator",
+                                  profile_id="default")
+
+    async def go():
+        await svc.on_request(video, "default", None)
+        await asyncio.gather(*list(svc._timers))
+        assert [event[0] for event in bot.events] == ["notify"]
+        assert store.get("default:abc123")["outcome"] == "hold_timeout"
+        return await svc.handle_verdict("default:abc123", _verdict())
+
+    result = asyncio.run(go())
+    assert result["outcome"] == "late_reply"
+    kinds = [event[0] for event in bot.events]
+    assert kinds == ["notify", "reply"]
+    assert bot.events[1][2] == 11          # threaded under the notification
+    assert "had already gone out" in bot.events[1][3]
+    row = store.get("default:abc123")
+    assert row["verdict"] == "allow" and row["outcome"] == "late_reply"
+
+
+def test_verdict_after_parent_decided_still_posts_the_summary(video_store, tmp_path):
+    """A parent approval during the hold must not swallow the review."""
+
+    async def poster(context, body):
+        return True
+
+    bot = _HoldBot()
+    svc, store = _hold_service(video_store, tmp_path, poster=poster, bot=bot)
+    video = video_store.add_video("abc123", "Minecraft build tutorial", "SomeCreator",
+                                  profile_id="default")
+
+    async def go():
+        await svc.on_request(video, "default", None)
+        video_store.update_status("abc123", "approved", profile_id="default")
+        return await svc.handle_verdict("default:abc123", _verdict())
+
+    result = asyncio.run(go())
+    assert result["outcome"] == "decided_reply"
+    kinds = [event[0] for event in bot.events]
+    assert kinds == ["notify", "reply"]
+    assert "already decided by a parent" in bot.events[1][3]
+    assert store.get("default:abc123")["verdict"] == "allow"
