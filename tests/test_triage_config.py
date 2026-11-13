@@ -9,6 +9,11 @@ def test_defaults_are_disabled():
     assert cfg.mode == "shadow"
     assert cfg.deadline_s == 60
     assert cfg.reply_enabled is True
+    assert cfg.hold_notification is True
+    assert cfg.hold_timeout_s == 240
+    assert cfg.auto_min_confidence == 0.85
+    assert cfg.auto_approve is True
+    assert cfg.auto_deny is True
 
 
 def _load_env_only(monkeypatch, tmp_path):
@@ -51,12 +56,46 @@ def test_incomplete_config_is_disabled_at_load(monkeypatch, tmp_path):
     assert cfg.triage.enabled is False
 
 
-def test_unknown_mode_is_preserved_for_the_startup_warning(monkeypatch, tmp_path):
+def test_auto_mode_is_accepted(monkeypatch, tmp_path, caplog):
     monkeypatch.setenv("BRG_TRIAGE_ENABLED", "true")
     monkeypatch.setenv("BRG_TRIAGE_MODE", "auto")
     monkeypatch.setenv("BRG_TRIAGE_URL", "http://hermes/x")
     monkeypatch.setenv("BRG_TRIAGE_SECRET", "out")
     monkeypatch.setenv("BRG_TRIAGE_CALLBACK_SECRET", "cb")
+    monkeypatch.setenv("BRG_TRIAGE_HOLD_NOTIFICATION", "false")
+    monkeypatch.setenv("BRG_TRIAGE_HOLD_TIMEOUT_S", "90")
+    monkeypatch.setenv("BRG_TRIAGE_AUTO_MIN_CONFIDENCE", "0.9")
+    monkeypatch.setenv("BRG_TRIAGE_AUTO_APPROVE", "false")
+    monkeypatch.setenv("BRG_TRIAGE_AUTO_DENY", "true")
     cfg = _load_env_only(monkeypatch, tmp_path)
-    assert cfg.triage.mode == "auto"  # refused at runtime, not silently rewritten
+    assert cfg.triage.mode == "auto"
     assert cfg.triage.enabled is True
+    assert cfg.triage.hold_notification is False
+    assert cfg.triage.hold_timeout_s == 90
+    assert cfg.triage.auto_min_confidence == 0.9
+    assert cfg.triage.auto_approve is False
+    assert cfg.triage.auto_deny is True
+    assert "not implemented" not in caplog.text
+
+
+def test_unknown_mode_falls_back_to_shadow(monkeypatch, tmp_path, caplog):
+    monkeypatch.setenv("BRG_TRIAGE_ENABLED", "true")
+    monkeypatch.setenv("BRG_TRIAGE_MODE", "yolo")
+    monkeypatch.setenv("BRG_TRIAGE_URL", "http://hermes/x")
+    monkeypatch.setenv("BRG_TRIAGE_SECRET", "out")
+    monkeypatch.setenv("BRG_TRIAGE_CALLBACK_SECRET", "cb")
+    cfg = _load_env_only(monkeypatch, tmp_path)
+    assert cfg.triage.mode == "shadow"
+    assert "yolo" in caplog.text
+
+
+def test_short_hold_warns(monkeypatch, tmp_path, caplog):
+    monkeypatch.setenv("BRG_TRIAGE_ENABLED", "true")
+    monkeypatch.setenv("BRG_TRIAGE_URL", "http://hermes/x")
+    monkeypatch.setenv("BRG_TRIAGE_SECRET", "out")
+    monkeypatch.setenv("BRG_TRIAGE_CALLBACK_SECRET", "cb")
+    monkeypatch.setenv("BRG_TRIAGE_DEADLINE_S", "120")
+    monkeypatch.setenv("BRG_TRIAGE_HOLD_TIMEOUT_S", "30")
+    cfg = _load_env_only(monkeypatch, tmp_path)
+    assert cfg.triage.hold_timeout_s == 30
+    assert "hold_timeout_s" in caplog.text

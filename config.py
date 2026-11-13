@@ -96,17 +96,30 @@ class TriageConfig:
     Disabled by default. See docs/triage.md for the contract.
     """
     enabled: bool = False
-    mode: str = "shadow"          # "shadow" only for now; "auto" is not implemented yet
+    mode: str = "shadow"          # "shadow" (advice only) or "auto" (apply a confident verdict)
     url: str = ""                 # Hermes webhook route, e.g. http://dug.lan:8644/p/brgtriage/webhooks/brg-request
     secret: str = field(default="", repr=False)          # HMAC secret for our outbound POST
     callback_secret: str = field(default="", repr=False)  # HMAC secret Hermes uses on the verdict callback
-    deadline_s: int = 60          # skip the threaded reply after this many seconds
+    deadline_s: int = 60          # skip the threaded reply after this many seconds (reply-only path)
     reply_enabled: bool = True    # post the triage summary as a threaded reply
+    hold_notification: bool = True   # wait for the verdict (or hold_timeout_s) before notifying
+    hold_timeout_s: int = 240        # release a held notification with no verdict after this
+    auto_min_confidence: float = 0.85
+    auto_approve: bool = True
+    auto_deny: bool = True
 
     def __post_init__(self):
-        # Only "shadow" is implemented; anything else is rejected loudly at startup
-        # rather than silently downgraded here.
+        # Unknown modes are warned at startup and left intact so the log shows
+        # what was configured. "shadow" and "auto" are the implemented values.
         self.mode = (self.mode or "shadow").strip().lower()
+        try:
+            self.hold_timeout_s = int(self.hold_timeout_s)
+        except (TypeError, ValueError):
+            self.hold_timeout_s = 240
+        try:
+            self.auto_min_confidence = float(self.auto_min_confidence)
+        except (TypeError, ValueError):
+            self.auto_min_confidence = 0.85
 
 
 @dataclass
@@ -202,6 +215,11 @@ class Config:
                 callback_secret=os.environ.get("BRG_TRIAGE_CALLBACK_SECRET", ""),
                 deadline_s=int(os.environ.get("BRG_TRIAGE_DEADLINE_S", "60")),
                 reply_enabled=os.environ.get("BRG_TRIAGE_REPLY_ENABLED", "true").lower() == "true",
+                hold_notification=os.environ.get("BRG_TRIAGE_HOLD_NOTIFICATION", "true").lower() == "true",
+                hold_timeout_s=int(os.environ.get("BRG_TRIAGE_HOLD_TIMEOUT_S", "240")),
+                auto_min_confidence=float(os.environ.get("BRG_TRIAGE_AUTO_MIN_CONFIDENCE", "0.85")),
+                auto_approve=os.environ.get("BRG_TRIAGE_AUTO_APPROVE", "true").lower() == "true",
+                auto_deny=os.environ.get("BRG_TRIAGE_AUTO_DENY", "true").lower() == "true",
             ),
         )
 
@@ -266,10 +284,17 @@ def load_config(config_path: str | None = None) -> Config:
                 ", ".join(missing),
             )
             triage.enabled = False
-        if triage.mode != "shadow":
+        if triage.mode not in ("shadow", "auto"):
             logger.warning(
-                "triage.mode %r is not implemented yet — running shadow (describe only, no action)",
+                "triage.mode %r is not implemented — running shadow (describe only, no action)",
                 triage.mode,
+            )
+            triage.mode = "shadow"
+        if triage.hold_timeout_s < triage.deadline_s:
+            logger.warning(
+                "triage.hold_timeout_s (%s) is below deadline_s (%s); a verdict may never arrive before the hold releases",
+                triage.hold_timeout_s,
+                triage.deadline_s,
             )
 
     # Validate timezone at startup
