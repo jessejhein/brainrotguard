@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import time
+from datetime import datetime, timezone
 
 import aiohttp
 
@@ -112,14 +113,22 @@ def render_reply(verdict: dict) -> str:
 
 
 class _Pending:
-    __slots__ = ("chat_id", "message_id", "deadline", "started", "timer")
+    __slots__ = (
+        "chat_id", "message_id", "deadline", "started", "timer",
+        "video", "profile_id", "released", "holding",
+    )
 
-    def __init__(self, chat_id, message_id, deadline, started):
+    def __init__(self, chat_id, message_id, deadline, started, *,
+                 video=None, profile_id="", holding=False):
         self.chat_id = chat_id
         self.message_id = message_id
         self.deadline = deadline
         self.started = started
         self.timer: asyncio.Task | None = None
+        self.video = video
+        self.profile_id = profile_id
+        self.released = False
+        self.holding = holding
 
 
 class TriageService:
@@ -143,13 +152,25 @@ class TriageService:
 
     @property
     def mode(self) -> str:
-        # Anything other than shadow is refused: phase 2 is not built.
-        return "shadow"
+        mode = str(getattr(self.config, "mode", "shadow") or "shadow").strip().lower()
+        return mode if mode in ("shadow", "auto") else "shadow"
+
+    def _holding_enabled(self, ref) -> bool:
+        """Hold only when configured and the caller has not already notified."""
+        return bool(getattr(self.config, "hold_notification", False)) and ref is None
 
     async def on_request(self, video: dict, profile_id: str, ref=None) -> None:
-        """Called after the notification is sent. Never raises into the request path."""
+        """Push context for a new request. Never raises into the request path.
+
+        When the caller passes a NotifyRef, the notification is already in the
+        chat and this only posts a later reply (``hold_notification: false``).
+        When ``ref`` is None and holding is on, the notification stays unsent
+        until a verdict or the hold timeout, and a failed push sends it now.
+        """
         if not self.enabled:
             return
+        holding = self._holding_enabled(ref)
+        request_id = ""
         try:
             request_id = f"{profile_id}:{video['video_id']}"
             if self.store.get(request_id):
@@ -157,26 +178,55 @@ class TriageService:
                 # tapped Resend). A second verdict would be dropped as a duplicate,
                 # so don't spend an agent run on it.
                 logger.info("Triage skipped for %s: already has a decision", request_id)
+                if holding:
+                    await self._notify_now(video, profile_id)
                 return
             context = build_request_context(self.video_store, video, profile_id)
         except Exception as exc:  # context building must never break a request
             logger.error("Triage context build failed for %s: %s", profile_id, exc)
+            if holding:
+                await self._notify_now(video, profile_id)
             return
 
-        if ref is not None:
+        if holding:
+            if not self._arm_hold(request_id, video, profile_id):
+                await self._notify_now(video, profile_id)
+                return
+        elif ref is not None:
             now = time.monotonic()
             pending = _Pending(
                 getattr(ref, "chat_id", None),
                 getattr(ref, "message_id", None),
                 now + max(1, int(self.config.deadline_s or 60)),
                 now,
+                video=video,
+                profile_id=profile_id,
+                holding=False,
             )
             self._pending[request_id] = pending
             self._schedule_timeout(request_id, pending)
 
-        task = asyncio.create_task(self._post(context))
+        task = asyncio.create_task(self._post_then_failopen(context, request_id if holding else None))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    def _arm_hold(self, request_id: str, video: dict, profile_id: str) -> bool:
+        """Register an in-memory hold and its durable row. False means fail-open."""
+        try:
+            now = time.monotonic()
+            timeout_s = max(1, int(getattr(self.config, "hold_timeout_s", 240) or 240))
+            pending = _Pending(
+                None, None, now + timeout_s, now,
+                video=video, profile_id=profile_id, holding=True,
+            )
+            self.store.save_hold(request_id, profile_id, video["video_id"], video)
+            self._pending[request_id] = pending
+            self._schedule_timeout(request_id, pending)
+            return True
+        except Exception as exc:
+            logger.error("Triage hold failed to register for %s: %s", request_id, exc)
+            self._pending.pop(request_id, None)
+            return False
 
     async def _post(self, context: dict) -> bool:
         try:
@@ -204,6 +254,17 @@ class TriageService:
             logger.warning("Triage push failed for %s: %s", context.get("request_id"), exc)
             return False
 
+    async def _post_then_failopen(self, context: dict, held_request_id: str | None) -> bool:
+        """Push, and if a held notification cannot be triaged, send it now."""
+        ok = await self._post(context)
+        if held_request_id and not ok:
+            pending = self._pending.get(held_request_id)
+            if pending is not None and pending.holding and not pending.released:
+                logger.warning("Triage push failed for %s; releasing notification", held_request_id)
+                await self._release(held_request_id, verdict=None)
+                self._record_outcome_if_absent(held_request_id, "push_failed")
+        return ok
+
     async def handle_verdict(self, request_id: str, payload: object) -> dict:
         """Validate, persist and (when still useful) post the threaded reply."""
         verdict = normalise_verdict(payload)
@@ -214,17 +275,28 @@ class TriageService:
             return {"status": "duplicate", "request_id": request_id}
 
         profile_id, _, video_id = request_id.partition(":")
-        pending = self._pending.pop(request_id, None)
+        pending = self._pending.get(request_id)
         if pending is not None and pending.timer is not None:
             pending.timer.cancel()
         now = time.monotonic()
         latency_ms = int((now - pending.started) * 1000) if pending else None
 
-        if pending is None:
+        if pending is not None and pending.holding and not pending.released:
+            row = self.video_store.get_video(video_id, profile_id)
+            if not row or row.get("status") != "pending":
+                outcome = "skipped_decided"
+                await self._release(request_id, verdict=None)
+            else:
+                await self._release(request_id, verdict)
+                outcome = "hold_released"
+        elif pending is None:
             outcome = "unknown_request"
+            self._pending.pop(request_id, None)
         elif now > pending.deadline:
             outcome = "late"
+            self._pending.pop(request_id, None)
         else:
+            self._pending.pop(request_id, None)
             row = self.video_store.get_video(video_id, profile_id)
             if not row or row.get("status") != "pending":
                 outcome = "skipped_decided"
@@ -247,6 +319,106 @@ class TriageService:
             request_id, verdict["verdict"], verdict["rank"], outcome, latency_ms,
         )
         return {"status": "ok", "request_id": request_id, "outcome": outcome}
+
+    async def _notify_now(self, video: dict | None, profile_id: str, receipt=None):
+        """Send the parent notification. Returns a NotifyRef or None. Never raises."""
+        if not video or self.bot is None:
+            return None
+        sender = getattr(self.bot, "notify_new_request", None)
+        if sender is None:
+            return None
+        try:
+            if receipt is not None:
+                return await sender(video, profile_id=profile_id, receipt=receipt)
+            return await sender(video, profile_id=profile_id)
+        except TypeError:
+            try:
+                return await sender(video, profile_id=profile_id)
+            except Exception as exc:
+                logger.error("Triage notification failed: %s", exc)
+                return None
+        except Exception as exc:
+            logger.error("Triage notification failed: %s", exc)
+            return None
+
+    async def _release(self, request_id: str, verdict: dict | None = None, receipt=None):
+        """Send a held notification once, then the summary reply when we have one."""
+        pending = self._pending.get(request_id)
+        if pending is None or pending.released:
+            return None
+        pending.released = True
+        if pending.timer is not None and pending.timer is not asyncio.current_task():
+            pending.timer.cancel()
+        self._pending.pop(request_id, None)
+        try:
+            self.store.delete_hold(request_id)
+        except Exception as exc:
+            logger.debug("Triage hold delete failed for %s: %s", request_id, exc)
+        ref = await self._notify_now(pending.video, pending.profile_id or "", receipt=receipt)
+        if (
+            verdict is not None
+            and ref is not None
+            and getattr(self.config, "reply_enabled", True)
+        ):
+            target = _Pending(
+                getattr(ref, "chat_id", None),
+                getattr(ref, "message_id", None),
+                pending.deadline,
+                pending.started,
+            )
+            await self._send_reply(target, render_reply(verdict))
+        return ref
+
+    def _record_outcome_if_absent(self, request_id: str, outcome: str) -> None:
+        if self.store.get(request_id):
+            return
+        profile_id, _, video_id = request_id.partition(":")
+        try:
+            self.store.record(
+                request_id=request_id, profile_id=profile_id, video_id=video_id,
+                verdict="none", mode=self.mode, outcome=outcome,
+            )
+            logger.info("Triage %s recorded for %s", outcome, request_id)
+        except Exception as exc:
+            logger.debug("Triage %s record failed for %s: %s", outcome, request_id, exc)
+
+    async def restore_holds(self) -> None:
+        """Deliver or re-arm holds left behind by a restart. Never raises."""
+        try:
+            holds = self.store.list_holds()
+        except Exception as exc:
+            logger.error("Triage hold restore failed: %s", exc)
+            return
+        timeout_s = max(1, int(getattr(self.config, "hold_timeout_s", 240) or 240))
+        for hold in holds:
+            request_id = hold["request_id"]
+            try:
+                if self.store.get(request_id) or request_id in self._pending:
+                    # A decision or a live timer already owns this request.
+                    if self.store.get(request_id):
+                        self.store.delete_hold(request_id)
+                    continue
+                video = hold.get("video") or {}
+                profile_id = hold.get("profile_id") or ""
+                age = _hold_age_s(hold.get("created_at"))
+                now = time.monotonic()
+                if age >= timeout_s or not getattr(self.config, "hold_notification", False):
+                    pending = _Pending(
+                        None, None, now, now - age,
+                        video=video, profile_id=profile_id, holding=True,
+                    )
+                    self._pending[request_id] = pending
+                    await self._release(request_id, verdict=None)
+                    self._record_outcome_if_absent(request_id, "hold_timeout")
+                else:
+                    pending = _Pending(
+                        None, None, now + (timeout_s - age), now - age,
+                        video=video, profile_id=profile_id, holding=True,
+                    )
+                    self._pending[request_id] = pending
+                    self._schedule_timeout(request_id, pending)
+            except Exception as exc:
+                logger.error("Triage hold restore failed for %s: %s", request_id, exc)
 
     async def _send_reply(self, pending: _Pending, text: str) -> bool:
         sender = getattr(self.bot, "send_triage_reply", None)
@@ -276,7 +448,11 @@ class TriageService:
             await asyncio.sleep(delay)
         except asyncio.CancelledError:
             raise
-        if self._pending.get(request_id) is not pending:
+        if self._pending.get(request_id) is not pending or pending.released:
+            return
+        if pending.holding:
+            await self._release(request_id, verdict=None)
+            self._record_outcome_if_absent(request_id, "hold_timeout")
             return
         self._pending.pop(request_id, None)
         profile_id, _, video_id = request_id.partition(":")
@@ -288,3 +464,14 @@ class TriageService:
             logger.info("Triage timeout recorded for %s", request_id)
         except Exception as exc:
             logger.debug("Triage timeout record failed for %s: %s", request_id, exc)
+
+
+def _hold_age_s(created_at: str | None) -> float:
+    """Age of a SQLite ``datetime('now')`` timestamp, in seconds."""
+    if not created_at:
+        return 0.0
+    try:
+        stamp = datetime.strptime(created_at[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return 0.0
+    return max(0.0, (datetime.now(timezone.utc) - stamp).total_seconds())

@@ -84,9 +84,31 @@ class BrainRotGuard:
                 bot=self.bot,
             )
             logger.info("Triage bridge enabled (mode=%s)", self.triage.mode)
+            try:
+                await self.triage.restore_holds()
+            except Exception as exc:
+                logger.error("Triage hold restore failed: %s", exc)
 
         # Wire dependencies onto app.state (replaces old setup() call)
         async def notify_callback(video: dict, profile_id: str = "default"):
+            triage_cfg = self.config.triage if self.config else None
+            hold = (
+                self.triage is not None
+                and triage_cfg is not None
+                and getattr(triage_cfg, "enabled", False)
+                and getattr(triage_cfg, "hold_notification", False)
+            )
+            if hold:
+                # The service sends the notification when the verdict arrives,
+                # the hold times out, or the push fails. Never raise into the
+                # child's request: if arming the hold itself fails, send now.
+                try:
+                    await self.triage.on_request(video, profile_id, None)
+                except Exception:
+                    logger.exception("Triage hold failed; sending the notification now")
+                    if self.bot:
+                        return await self.bot.notify_new_request(video, profile_id=profile_id)
+                return None
             ref = None
             if self.bot:
                 ref = await self.bot.notify_new_request(video, profile_id=profile_id)

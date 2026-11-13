@@ -79,3 +79,151 @@ def test_existing_decision_table_gains_new_columns(tmp_path):
     store.set_applied("default:abc", "auto_denied")
     assert store.get("default:abc")["applied"] == "auto_denied"
     store.close()
+
+
+import asyncio
+
+from bot.approval import NotifyRef
+from config import TriageConfig
+from triage.service import TriageService
+
+
+class _HoldBot:
+    def __init__(self):
+        self.events = []
+
+    async def notify_new_request(self, video, profile_id="default", receipt=None):
+        self.events.append(("notify", video["video_id"], receipt))
+        return NotifyRef(chat_id=-100, message_id=11)
+
+    async def send_triage_reply(self, chat_id, message_id, text):
+        self.events.append(("reply", chat_id, message_id, text))
+        return True
+
+
+def _hold_service(video_store, tmp_path, *, poster, bot=None, hold_timeout_s=240):
+    cfg = TriageConfig(
+        enabled=True, mode="shadow", url="http://hermes/x", secret="out", callback_secret="cb",
+        hold_notification=True, hold_timeout_s=hold_timeout_s, deadline_s=60,
+    )
+    store = TriageStore(str(tmp_path / "hold.db"))
+    svc = TriageService(cfg, video_store, store, bot=bot or _HoldBot(), poster=poster)
+    return svc, store
+
+
+def _verdict():
+    return {
+        "request_id": "default:abc123",
+        "verdict": "allow",
+        "confidence": 0.91,
+        "category": "fun",
+        "summary": "A Minecraft build tutorial.",
+        "reason": "Matches approved builds.",
+    }
+
+
+def test_verdict_releases_hold_once_in_order(video_store, tmp_path):
+    posted = []
+
+    async def poster(context, body):
+        posted.append(context["request_id"])
+        return True
+
+    bot = _HoldBot()
+    svc, store = _hold_service(video_store, tmp_path, poster=poster, bot=bot)
+    video = video_store.add_video("abc123", "Minecraft build tutorial", "SomeCreator", profile_id="default")
+
+    async def go():
+        await svc.on_request(video, "default", None)
+        await asyncio.gather(*list(svc._tasks))
+        assert bot.events == []
+        return await svc.handle_verdict("default:abc123", _verdict())
+
+    result = asyncio.run(go())
+    assert result["outcome"] == "hold_released"
+    assert posted == ["default:abc123"]
+    kinds = [event[0] for event in bot.events]
+    assert kinds == ["notify", "reply"]
+    assert bot.events[1][1] == -100
+    assert bot.events[1][2] == 11
+    assert "A Minecraft build tutorial." in bot.events[1][3]
+    assert store.get("default:abc123")["outcome"] == "hold_released"
+    assert store.list_holds() == []
+
+
+def test_timeout_releases_without_a_verdict(video_store, tmp_path, monkeypatch):
+    monkeypatch.setattr("triage.service.TIMEOUT_GRACE_S", 0.0)
+
+    async def poster(context, body):
+        return True
+
+    bot = _HoldBot()
+    svc, store = _hold_service(video_store, tmp_path, poster=poster, bot=bot, hold_timeout_s=1)
+    video = video_store.add_video("abc123", "Title", "Chan", profile_id="default")
+
+    async def go():
+        await svc.on_request(video, "default", None)
+        await asyncio.gather(*list(svc._tasks))
+        await asyncio.gather(*list(svc._timers))
+
+    asyncio.run(go())
+    assert [event[0] for event in bot.events] == ["notify"]
+    row = store.get("default:abc123")
+    assert row["outcome"] == "hold_timeout"
+    assert row["verdict"] == "none"
+    assert store.list_holds() == []
+
+
+def test_push_failure_releases_immediately(video_store, tmp_path):
+    async def poster(context, body):
+        raise RuntimeError("connection refused")
+
+    bot = _HoldBot()
+    svc, store = _hold_service(video_store, tmp_path, poster=poster, bot=bot, hold_timeout_s=240)
+    video = video_store.add_video("abc123", "Title", "Chan", profile_id="default")
+
+    async def go():
+        await svc.on_request(video, "default", None)
+        await asyncio.gather(*list(svc._tasks))
+
+    asyncio.run(go())
+    assert [event[0] for event in bot.events] == ["notify"]
+    assert store.get("default:abc123")["outcome"] == "push_failed"
+    assert store.list_holds() == []
+    assert not svc._timers
+
+
+def test_restart_flush_does_not_duplicate(video_store, tmp_path):
+    async def poster(context, body):
+        return True
+
+    bot = _HoldBot()
+    svc, store = _hold_service(video_store, tmp_path, poster=poster, bot=bot)
+    video = video_store.add_video("abc123", "Title", "Chan", profile_id="default")
+
+    async def arm():
+        await svc.on_request(video, "default", None)
+        await asyncio.gather(*list(svc._tasks))
+        for timer in list(svc._timers):
+            timer.cancel()
+        await asyncio.gather(*list(svc._timers), return_exceptions=True)
+
+    asyncio.run(arm())
+    assert store.get_hold("default:abc123") is not None
+    store.conn.execute(
+        "UPDATE triage_holds SET created_at = ? WHERE request_id = ?",
+        ("2000-01-01 00:00:00", "default:abc123"),
+    )
+    store.conn.commit()
+
+    bot2 = _HoldBot()
+    restarted = TriageService(svc.config, video_store, store, bot=bot2, poster=poster)
+
+    async def flush_twice():
+        await restarted.restore_holds()
+        await restarted.restore_holds()
+
+    asyncio.run(flush_twice())
+    assert [event[0] for event in bot2.events] == ["notify"]
+    assert store.list_holds() == []
+    assert store.get("default:abc123")["outcome"] == "hold_timeout"
