@@ -16,8 +16,22 @@ from web.helpers import (
 )
 from web.cache import invalidate_catalog_cache
 from i18n import category_label
+from triage.store import child_note
 
 router = APIRouter()
+
+
+def _review_for(request: Request, video_id: str) -> dict | None:
+    """Child-facing triage note for the session profile, or None."""
+    triage = getattr(request.app.state, "triage", None)
+    store = getattr(triage, "store", None) if triage is not None else None
+    if store is None:
+        return None
+    profile_id = request.session.get("child_id", "default")
+    try:
+        return child_note(store.for_video(profile_id, video_id))
+    except Exception:
+        return None
 
 
 @router.get("/pending/{video_id}", response_class=HTMLResponse)
@@ -45,6 +59,7 @@ async def pending_video(request: Request, video_id: str):
             **base_ctx(request),
             "video": video,
             "poll_interval": poll_interval,
+            "review": _review_for(request, video_id),
         })
 
 

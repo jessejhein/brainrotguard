@@ -54,6 +54,30 @@ OUTCOMES = (
     "hold_released", "hold_timeout", "push_failed",
 )
 
+# Outcomes with no verdict worth showing the child. Timeouts and late replies
+# stay hidden so the waiting page does not invent a review.
+_CHILD_HIDDEN_OUTCOMES = frozenset({"timeout", "hold_timeout", "late"})
+
+
+def child_note(row: dict | None) -> dict | None:
+    """Neutral child-facing review, or None when there is nothing to show.
+
+    The result has ``label`` (a translation key) and ``summary`` only. Reason,
+    confidence, rank and policy text are never included.
+    """
+    if not row:
+        return None
+    if row.get("outcome") in _CHILD_HIDDEN_OUTCOMES:
+        return None
+    verdict = row.get("verdict") or ""
+    if verdict in ("", "none"):
+        return None
+    if verdict == "allow":
+        label = "Reviewed: looks fine"
+    else:
+        label = "Reviewed: a parent is deciding"
+    return {"label": label, "summary": (row.get("summary") or "").strip()}
+
 
 class TriageStore:
     """Small SQLite store for triage decisions (WAL, single writer lock)."""

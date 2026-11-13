@@ -19,9 +19,30 @@ from web.cache import (
 )
 from utils import get_today_str, get_day_utc_bounds
 from i18n import format_month_day, t
+from triage.store import child_note
 
 router = APIRouter()
 _HISTORY_PAGE_SIZE = 30
+
+
+def _attach_child_reviews(request: Request, videos: list[dict], status_label: str) -> None:
+    """Add a neutral status label and, when a verdict exists, its summary."""
+    triage = getattr(request.app.state, "triage", None)
+    store = getattr(triage, "store", None) if triage is not None else None
+    profile_id = request.session.get("child_id", "default")
+    for video in videos:
+        video["status_label"] = status_label
+        video["review_label"] = ""
+        video["review_summary"] = ""
+        if store is None:
+            continue
+        try:
+            note = child_note(store.for_video(profile_id, video["video_id"]))
+        except Exception:
+            note = None
+        if note:
+            video["review_label"] = note["label"]
+            video["review_summary"] = note["summary"]
 
 
 def _history_date_label(date_str: str, today_str: str, locale: str) -> str:
@@ -205,12 +226,18 @@ async def requests_page(request: Request):
     cs = get_child_store(request)
     pending_videos = cs.get_pending()
     approved_videos = cs.get_requested_approved(limit=100)
+    denied_videos = cs.get_by_status("denied")
     annotate_categories(pending_videos, cs)
     annotate_categories(approved_videos, cs)
+    annotate_categories(denied_videos, cs)
+    _attach_child_reviews(request, pending_videos, "Waiting")
+    _attach_child_reviews(request, approved_videos, "Approved")
+    _attach_child_reviews(request, denied_videos, "Not approved")
     return templates.TemplateResponse(request, "requests.html", {
         **base_ctx(request),
         "pending_videos": pending_videos,
         "approved_videos": approved_videos,
+        "denied_videos": denied_videos,
     })
 
 
